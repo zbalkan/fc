@@ -1,104 +1,158 @@
 /*
- * FilecheckApp.c - CLI application using filecheck.h
- * Provides feature-compatible interface to fc.exe using header-only library.
+ * PROJECT:     FileCheck CLI Application
+ * LICENSE:     GPL2
+ * PURPOSE:     Provides a feature-compatible command-line interface to fc.exe
+ *              using the FileCheck.h library.
+ * COPYRIGHT:   Copyright 2025 Zafer Balkan
  */
+
 #include "filecheck.h"
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
+#include <wchar.h>
+#include <ctype.h>
 
-static void default_output(void* user_data, const char* message, int line1, int line2) {
-	if (line1 >= 0 && line2 >= 0) {
-		printf("%s (Line %d vs %d)\n", message, line1, line2);
-	}
-	else {
-		printf("%s\n", message);
-	}
+//
+// Default callback to print comparison results to the console.
+//
+static void
+DefaultOutputCallback(
+    _In_opt_ void* UserData,
+    _In_ const char* Message,
+    _In_ int Line1,
+    _In_ int Line2)
+{
+    // UserData is not used in this implementation.
+    (void)UserData;
+
+    if (Line1 >= 0 && Line2 >= 0)
+    {
+        printf("%s (Line %d vs %d)\n", Message, Line1, Line2);
+    }
+    else
+    {
+        printf("%s\n", Message);
+    }
 }
 
-static const char* get_basename(const char* path) {
-	const char* base = strrchr(path, '\\');
-	return base ? base + 1 : path;
+//
+// Prints the command-line usage instructions.
+//
+static void
+PrintUsage(void)
+{
+    printf("Usage: fc.exe [options] file1 file2\n");
+    printf("Options:\n");
+    printf("  /B    Binary comparison\n");
+    printf("  /C    Case-insensitive comparison\n");
+    printf("  /W    Ignore whitespace differences\n");
+    printf("  /L    ASCII text comparison (default)\n");
+    printf("  /N    Show line numbers in text mode\n");
+    printf("  /T    Do not expand tabs\n");
+    printf("  /U    Unicode text comparison\n");
+    printf("  /nnnn Set resync line threshold (default 2)\n");
+    printf("  /LBn  Set internal buffer size for text lines (default 100)\n");
 }
 
-static void print_usage(const char* prog) {
-	printf("Usage: %s [options] file1 file2\n", prog);
-	printf("Options:\n");
-	printf("  /B    Binary comparison\n");
-	printf("  /C    Case-insensitive comparison\n");
-	printf("  /W    Ignore whitespace differences\n");
-	printf("  /L    ASCII text comparison (default)\n");
-	printf("  /N    Show line numbers in text mode\n");
-	printf("  /T    Do not expand tabs\n");
-	printf("  /U    Unicode text comparison\n");
-	printf("  /nnnn Set resync line threshold (default 2)\n");
-	printf("  /LBn  Set internal buffer size for text lines (default 100)\n");
-}
+//
+// Main entry point for the application.
+// Using wmain to natively support Unicode command-line arguments.
+//
+int
+wmain(
+    _In_ int argc,
+    _In_reads_(argc) WCHAR* argv[])
+{
+    if (argc < 3)
+    {
+        PrintUsage();
+        return -1; // Syntax error
+    }
 
-int main(int argc, char* argv[]) {
-	if (argc < 3) {
-		const char* progname = get_basename(argv[0]);
-		print_usage(progname);
-		return -1; /* syntax error */
-	}
+    FC_CONFIG Config = {0}; // Initialize all fields to zero
 
-	fc_config_t cfg = {0}; /* Initialize all fields to zero */
-	/* set defaults */
-	cfg.mode = FC_MODE_TEXT;
-	cfg.flags = 0;
-	cfg.resync_lines = 2;
-	cfg.buffer_lines = 100;
-	cfg.output = default_output;
-	cfg.user_data = NULL;
+    // Set defaults
+    Config.Mode = FC_MODE_TEXT;
+    Config.Flags = 0;
+    Config.ResyncLines = 2;
+    Config.BufferLines = 100;
+    Config.Output = DefaultOutputCallback;
+    Config.UserData = NULL;
 
-	int i = 1;
-	for (; i < argc - 2; ++i) {
-		char* opt = argv[i];
-		if (opt[0] == '/' || opt[0] == '-') {
-			if (isdigit((unsigned char)opt[1])) {
-				cfg.resync_lines = atoi(opt + 1);
-			}
-			else if (strncmp(opt + 1, "LB", 2) == 0 && isdigit((unsigned char)opt[3 - 1])) {
-				cfg.buffer_lines = atoi(opt + 3);
-			}
-			else {
-				switch (toupper((unsigned char)opt[1])) {
-				case 'B': cfg.mode = FC_MODE_BINARY; break;
-				case 'C': cfg.flags |= FC_IGNORE_CASE; break;
-				case 'W': cfg.flags |= FC_IGNORE_WS; break;
-				case 'L': cfg.mode = FC_MODE_TEXT; break;
-				case 'N': cfg.flags |= FC_SHOW_LINE_NUMS; break;
-				case 'T': cfg.flags |= FC_RAW_TABS; break;
-				case 'U': cfg.flags |= FC_UNICODE_TEXT; break;
-				default:
-					printf("Invalid option: %s\n", opt);
-					return -1;
-				}
-			}
-		}
-		else {
-			printf("Invalid argument: %s\n", opt);
-			return -1;
-		}
-	}
-	const char* file1 = argv[argc - 2];
-	const char* file2 = argv[argc - 1];
+    int ArgIndex = 1;
+    for (; ArgIndex < argc - 2; ++ArgIndex)
+    {
+        WCHAR* Option = argv[ArgIndex];
+        if (Option[0] == L'/' || Option[0] == L'-')
+        {
+            // Check for numeric resync line option (e.g., /20)
+            if (iswdigit(Option[1]))
+            {
+                Config.ResyncLines = _wtoi(Option + 1);
+            }
+            // Check for buffer line option (e.g., /LB100)
+            else if (wcsncmp(Option + 1, L"LB", 2) == 0 && iswdigit(Option[3]))
+            {
+                Config.BufferLines = _wtoi(Option + 3);
+            }
+            else
+            {
+                switch (towupper(Option[1]))
+                {
+                    case L'B':
+                        Config.Mode = FC_MODE_BINARY;
+                        break;
+                    case L'C':
+                        Config.Flags |= FC_IGNORE_CASE;
+                        break;
+                    case L'W':
+                        Config.Flags |= FC_IGNORE_WS;
+                        break;
+                    case L'L':
+                        Config.Mode = FC_MODE_TEXT;
+                        break;
+                    case L'N':
+                        Config.Flags |= FC_SHOW_LINE_NUMS;
+                        break;
+                    case L'T':
+                        Config.Flags |= FC_RAW_TABS;
+                        break;
+                    case L'U':
+                        Config.Flags |= FC_UNICODE_TEXT;
+                        break;
+                    default:
+                        wprintf(L"Invalid option: %s\n", Option);
+                        return -1;
+                }
+            }
+        }
+        else
+        {
+            wprintf(L"Invalid argument: %s\n", Option);
+            return -1;
+        }
+    }
 
-	fc_result_t res = fc_compare_files(file1, file2, &cfg);
-	if (res == FC_OK) {
-		/* identical */
-		return 0;
-	}
-	else if (res == FC_DIFFERENT) {
-		/* differences found */
-		return 1;
-	}
-	else if (res == FC_ERROR_IO || res == FC_ERROR_MEMORY) {
-		fprintf(stderr, "Error during comparison: %d\n", res);
-		return 2;
-	}
-	else {
-		/* invalid param */
-		return -1;
-	}
+    const WCHAR* File1 = argv[argc - 2];
+    const WCHAR* File2 = argv[argc - 1];
+
+    // Call the wide-character version of the comparison function for best performance
+    FC_RESULT Result = FileCheckCompareFilesW(File1, File2, &Config);
+
+    switch (Result)
+    {
+        case FC_OK:
+            // Files are identical
+            return 0;
+        case FC_DIFFERENT:
+            // Differences were found and printed by the callback
+            return 1;
+        case FC_ERROR_IO:
+        case FC_ERROR_MEMORY:
+            fprintf(stderr, "Error during comparison: %d\n", Result);
+            return 2;
+        default:
+            // Invalid parameter or other syntax error
+            return -1;
+    }
 }

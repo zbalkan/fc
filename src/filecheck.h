@@ -1,347 +1,647 @@
 /*
- * filecheck.h - Header-only file comparison library (text and binary)
- * Windows-only, UTF-8 filenames via wide-character paths.
- * Uses append-only dynamic arrays for text diff and memory-mapped binary compare.
- * Public domain or MIT license.
- *
- * Thread Safety:
- *   - All public functions are reentrant and safe to call concurrently.
- *   - No global or static mutable state is used by the library.
- *   - Each call allocates its own local resources.
- *   - User-provided fc_output_cb callbacks must be thread-safe if used across threads.
- *   - fc_compare_buffers works entirely on local heap memory and does not modify shared state.
+ * PROJECT:     FileCheck Library
+ * LICENSE:     GPL2
+ * PURPOSE:     Header-only file comparison library for Windows.
+ * COPYRIGHT:   Copyright 2025 Zafer Balkan
  */
-#ifndef FILECHECK_H
-#define FILECHECK_H
+
+#pragma once
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <windows.h>
-#include <wchar.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <ctype.h>
 #include <stdint.h>
 #include <stddef.h>
 
-    /* Return codes */
-    typedef enum {
-        FC_OK = 0,
-        FC_DIFFERENT,
-        FC_ERROR_IO,
-        FC_ERROR_INVALID_PARAM,
-        FC_ERROR_MEMORY
-    } fc_result_t;
+//
+// Return codes for comparison operations.
+//
+typedef enum
+{
+    FC_OK = 0,
+    FC_DIFFERENT,
+    FC_ERROR_IO,
+    FC_ERROR_INVALID_PARAM,
+    FC_ERROR_MEMORY
+} FC_RESULT;
 
-    /* Comparison modes */
-    typedef enum {
-        FC_MODE_TEXT,
-        FC_MODE_BINARY
-    } fc_mode_t;
+//
+// Specifies the comparison mode (text or binary).
+//
+typedef enum
+{
+    FC_MODE_TEXT,
+    FC_MODE_BINARY
+} FC_MODE;
 
-    /* Flags */
-#define FC_IGNORE_CASE     0x0001  /* ignore case */
-#define FC_IGNORE_WS       0x0002  /* ignore whitespace */
-#define FC_SHOW_LINE_NUMS  0x0004  /* show line numbers */
-#define FC_RAW_TABS        0x0008  /* do not expand tabs */
-#define FC_UNICODE_TEXT    0x0010  /* treat as UTF-16 text */
+//
+// Flags to modify comparison behavior.
+//
+#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
+#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
+#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
+#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+#define FC_UNICODE_TEXT     0x0010  // Treat files as UTF-16 text.
 
-/* Output callback: message with optional line numbers */
-    typedef void (*fc_output_cb)(void* user_data, const char* message,
-        int line1, int line2);
+/**
+ * @brief Callback function for reporting comparison differences.
+ *
+ * @param UserData  User-defined data passed from the FC_CONFIG struct.
+ * @param Message   A UTF-8 encoded string describing the difference.
+ * @param Line1     The line number in the first file, or -1 if not applicable.
+ * @param Line2     The line number in the second file, or -1 if not applicable.
+ */
+typedef void (*FC_OUTPUT_CALLBACK)(
+    void* UserData,
+    const char* Message,
+    int Line1,
+    int Line2);
 
-    /* Configuration */
-    typedef struct {
-        fc_mode_t    mode;         /* text or binary */
-        unsigned     flags;        /* option flags */
-        unsigned     resync_lines; /* reserved */
-        unsigned     buffer_lines; /* reserved */
-        fc_output_cb output;       /* callback for diff messages */
-        void* user_data;    /* passed to callback */
-    } fc_config_t;
+//
+// Configuration structure for a file comparison operation.
+//
+typedef struct
+{
+    FC_MODE Mode;               // Text or binary comparison mode.
+    UINT Flags;                 // Option flags from FC_* defines.
+    UINT ResyncLines;           // Reserved for future use.
+    UINT BufferLines;           // Reserved for future use.
+    FC_OUTPUT_CALLBACK Output;  // Callback function for diff messages.
+    void* UserData;             // User-defined data passed to the callback.
+} FC_CONFIG;
 
-    /* UTF-8 path fopen with fallback */
-    static inline FILE* fc_fopen(const char* path, const char* mode) {
-        int cw = MultiByteToWideChar(CP_UTF8, 0, path, -1, NULL, 0);
-        if (cw <= 0) {
-            FILE* f = NULL;
-            return fopen_s(&f, path, mode) == 0 ? f : NULL;
-        }
-        wchar_t* wpath = (wchar_t*)malloc(cw * sizeof(wchar_t));
-        if (!wpath) {
-            FILE* f = NULL;
-            return fopen_s(&f, path, mode) == 0 ? f : NULL;
-        }
-        MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, cw);
-        int mw = MultiByteToWideChar(CP_UTF8, 0, mode, -1, NULL, 0);
-        wchar_t* wmode = mw > 0 ? (wchar_t*)malloc(mw * sizeof(wchar_t)) : NULL;
-        if (!wmode) {
-            free(wpath);
-            FILE* f = NULL;
-            return fopen_s(&f, path, mode) == 0 ? f : NULL;
-        }
-        MultiByteToWideChar(CP_UTF8, 0, mode, -1, wmode, mw);
-        FILE* f = _wfopen(wpath, wmode);
-        free(wmode);
-        free(wpath);
-        if (f) return f;
-        FILE* fb = NULL;
-        return fopen_s(&fb, path, mode) == 0 ? fb : NULL;
+
+/* -------------------- Public API Functions -------------------- */
+
+/**
+ * @brief Compares two files using UTF-16 encoded paths. (Primary Function)
+ *
+ * This is the most efficient function, avoiding string conversions. It supports long paths.
+ *
+ * @param Path1 Path to the first file, UTF-16 encoded.
+ * @param Path2 Path to the second file, UTF-16 encoded.
+ * @param Config A pointer to the comparison configuration structure.
+ *
+ * @return An FC_RESULT code indicating the outcome of the comparison.
+ */
+FC_RESULT
+FileCheckCompareFilesW(
+    _In_ const WCHAR* Path1,
+    _In_ const WCHAR* Path2,
+    _In_ const FC_CONFIG* Config);
+
+/**
+ * @brief Compares two files using UTF-8 encoded paths.
+ *
+ * This is a convenience wrapper that converts paths to UTF-16 before comparison.
+ *
+ * @param Path1Utf8 Path to the first file, UTF-8 encoded.
+ * @param Path2Utf8 Path to the second file, UTF-8 encoded.
+ * @param Config A pointer to the comparison configuration structure.
+ *
+ * @return An FC_RESULT code indicating the outcome of the comparison.
+ */
+FC_RESULT
+FileCheckCompareFilesUtf8(
+    _In_ const char* Path1Utf8,
+    _In_ const char* Path2Utf8,
+    _In_ const FC_CONFIG* Config);
+
+
+/* -------------------- Internal Implementation (Private) -------------------- */
+
+// All functions and structs below are not part of the public API.
+
+typedef struct _FC_LINE
+{
+    char* Text;
+    size_t Length;
+    UINT Hash;
+} FC_LINE;
+
+typedef struct _FC_LINE_ARRAY
+{
+    FC_LINE* Lines;
+    size_t Count;
+    size_t Capacity;
+} FC_LINE_ARRAY;
+
+// Forward declaration for the main implementation function.
+static FC_RESULT
+_FileCheckCompareFilesImpl(
+    _In_ const WCHAR* Path1,
+    _In_ const WCHAR* Path2,
+    _In_ const FC_CONFIG* Config);
+
+static inline unsigned char
+_FileCheckToLowerAscii(
+    unsigned char Character)
+{
+    if (Character >= 'A' && Character <= 'Z')
+    {
+        return Character + ('a' - 'A');
+    }
+    return Character;
+}
+
+static inline void
+_FileCheckIntegerToHex(
+    size_t Value,
+    char* OutputBuffer)
+{
+    const char* HexDigits = "0123456789abcdef";
+    char TempBuffer[16];
+    int Index = 0;
+
+    if (Value == 0)
+    {
+        OutputBuffer[0] = '0';
+        OutputBuffer[1] = '\0';
+        return;
     }
 
-    /* Read entire file into buffer */
-    static inline char* fc_read_file(const char* path, size_t* out_len,
-        fc_result_t* out_err) {
-        if (!path || !out_len || !out_err) return NULL;
-        FILE* f = fc_fopen(path, "rb");
-        if (!f) { *out_err = FC_ERROR_IO; return NULL; }
-        fseek(f, 0, SEEK_END);
-        long sz = ftell(f);
-        if (sz < 0) { fclose(f); *out_err = FC_ERROR_IO; return NULL; }
-        size_t len = (size_t)sz;
-        rewind(f);
-        char* buf = (char*)malloc(len);
-        if (!buf) { fclose(f); *out_err = FC_ERROR_MEMORY; return NULL; }
-        size_t r = fread(buf, 1, len, f);
-        fclose(f);
-        if (r != len) { free(buf); *out_err = FC_ERROR_IO; return NULL; }
-        *out_len = len;
-        *out_err = FC_OK;
-        return buf;
+    do
+    {
+        TempBuffer[Index++] = HexDigits[Value % 16];
+        Value /= 16;
+    } while (Value > 0);
+
+    int OutputIndex = 0;
+    while (Index > 0)
+    {
+        OutputBuffer[OutputIndex++] = TempBuffer[--Index];
+    }
+    OutputBuffer[OutputIndex] = '\0';
+}
+
+static inline WCHAR*
+_FileCheckCreateLongPathW(
+    _In_ const WCHAR* Path)
+{
+    size_t Length = 0;
+    const WCHAR* Ptr = Path;
+    while (*Ptr++) Length++;
+
+    // Allocate for "\\?\" + path + null terminator
+    WCHAR* LongPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (Length + 5) * sizeof(WCHAR));
+    if (LongPath == NULL)
+    {
+        return NULL;
     }
 
-    /* Line descriptor */
-    typedef struct {
-        char* text;
-        size_t   len;
-        unsigned hash;
-    } Line;
+    LongPath[0] = L'\\';
+    LongPath[1] = L'\\';
+    LongPath[2] = L'?';
+    LongPath[3] = L'\\';
 
-    /* Append-only dynamic array */
-    typedef struct {
-        Line* lines;
-        size_t   count;
-        size_t   capacity;
-    } LineArray;
-
-    static inline void la_init(LineArray* la) {
-        la->lines = NULL;
-        la->count = la->capacity = 0;
+    Ptr = Path;
+    WCHAR* Destination = LongPath + 4;
+    while (*Ptr)
+    {
+        *Destination++ = *Ptr++;
     }
+    *Destination = L'\0';
 
-    static inline void la_free(LineArray* la) {
-        free(la->lines);
-        la->lines = NULL;
-        la->count = la->capacity = 0;
-    }
+    return LongPath;
+}
 
-    /* Hash line */
-    static inline unsigned fc_hash_line(const char* s, size_t len,
-        unsigned flags) {
-        unsigned h = 0;
-        for (size_t i = 0; i < len; ++i) {
-            unsigned char c = (unsigned char)s[i];
-            if ((flags & FC_IGNORE_WS) && (c == ' ' || c == '\t')) continue;
-            if (flags & FC_IGNORE_CASE) c = (unsigned char)tolower(c);
-            h = h * 31 + c;
-        }
-        return h;
-    }
+static inline void
+_FileCheckLineArrayInit(
+    _Inout_ FC_LINE_ARRAY* LineArray)
+{
+    LineArray->Lines = NULL;
+    LineArray->Count = 0;
+    LineArray->Capacity = 0;
+}
 
-    /* Duplicate substring */
-    static inline char* fc_strdup_range(const char* s, size_t len) {
-        char* out = (char*)malloc(len + 1);
-        if (!out) return NULL;
-        memcpy(out, s, len);
-        out[len] = '\0';
-        return out;
-    }
-
-    /* Append to LineArray */
-    static inline int la_append(LineArray* la, char* text, size_t len,
-        unsigned hash) {
-        if (la->count + 1 > la->capacity) {
-            size_t newcap = la->capacity ? la->capacity * 2 : 64;
-            Line* tmp = (Line*)realloc(la->lines, newcap * sizeof(Line));
-            if (!tmp) return 0;
-            la->lines = tmp;
-            la->capacity = newcap;
-        }
-        la->lines[la->count].text = text;
-        la->lines[la->count].len = len;
-        la->lines[la->count].hash = hash;
-        la->count++;
-        return 1;
-    }
-
-    /* Parse lines into LineArray */
-    static inline fc_result_t parse_lines_array(const char* buf, size_t buflen,
-        LineArray* la, unsigned flags) {
-        la_init(la);
-        const char* p = buf, * end = buf + buflen;
-        while (p < end) {
-            const char* nl = p;
-            while (nl < end && *nl != '\n' && *nl != '\r') nl++;
-            size_t len = (size_t)(nl - p);
-            char* txt = fc_strdup_range(p, len);
-            if (!txt || !la_append(la, txt, len,
-                fc_hash_line(txt, len, flags))) {
-                free(txt);
-                la_free(la);
-                return FC_ERROR_MEMORY;
+static inline void
+_FileCheckLineArrayFree(
+    _Inout_ FC_LINE_ARRAY* LineArray)
+{
+    if (LineArray->Lines != NULL)
+    {
+        for (size_t i = 0; i < LineArray->Count; ++i)
+        {
+            if (LineArray->Lines[i].Text != NULL)
+            {
+                HeapFree(GetProcessHeap(), 0, LineArray->Lines[i].Text);
             }
-            while (nl < end && (*nl == '\n' || *nl == '\r')) nl++;
-            p = nl;
         }
-        return FC_OK;
+        HeapFree(GetProcessHeap(), 0, LineArray->Lines);
+    }
+    LineArray->Lines = NULL;
+    LineArray->Count = 0;
+    LineArray->Capacity = 0;
+}
+
+static inline UINT
+_FileCheckHashLine(
+    _In_ const char* String,
+    _In_ size_t Length,
+    _In_ UINT Flags)
+{
+    UINT Hash = 0;
+    for (size_t i = 0; i < Length; ++i)
+    {
+        unsigned char Character = (unsigned char)String[i];
+        if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+        {
+            continue;
+        }
+        if (Flags & FC_IGNORE_CASE)
+        {
+            Character = _FileCheckToLowerAscii(Character);
+        }
+        Hash = Hash * 31 + Character;
+    }
+    return Hash;
+}
+
+static inline char*
+_FileCheckStringDuplicateRange(
+    _In_ const char* String,
+    _In_ size_t Length)
+{
+    char* Output = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+    if (Output == NULL)
+    {
+        return NULL;
+    }
+    CopyMemory(Output, String, Length);
+    Output[Length] = '\0';
+    return Output;
+}
+
+static inline BOOL
+_FileCheckLineArrayAppend(
+    _Inout_ FC_LINE_ARRAY* LineArray,
+    _In_ char* Text,
+    _In_ size_t Length,
+    _In_ UINT Hash)
+{
+    if (LineArray->Count + 1 > LineArray->Capacity)
+    {
+        size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
+        FC_LINE* Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(),
+                                              0,
+                                              LineArray->Lines,
+                                              NewCapacity * sizeof(FC_LINE));
+        if (Temp == NULL)
+        {
+            return FALSE;
+        }
+        LineArray->Lines = Temp;
+        LineArray->Capacity = NewCapacity;
+    }
+    LineArray->Lines[LineArray->Count].Text = Text;
+    LineArray->Lines[LineArray->Count].Length = Length;
+    LineArray->Lines[LineArray->Count].Hash = Hash;
+    LineArray->Count++;
+    return TRUE;
+}
+
+static inline FC_RESULT
+_FileCheckParseLines(
+    _In_ const char* Buffer,
+    _In_ size_t BufferLength,
+    _Inout_ FC_LINE_ARRAY* LineArray,
+    _In_ UINT Flags)
+{
+    _FileCheckLineArrayInit(LineArray);
+    const char* Ptr = Buffer;
+    const char* End = Buffer + BufferLength;
+
+    while (Ptr < End)
+    {
+        const char* Newline = Ptr;
+        while (Newline < End && *Newline != '\n' && *Newline != '\r')
+        {
+            Newline++;
+        }
+
+        size_t Length = (size_t)(Newline - Ptr);
+        char* Text = _FileCheckStringDuplicateRange(Ptr, Length);
+        if (Text == NULL)
+        {
+            _FileCheckLineArrayFree(LineArray);
+            return FC_ERROR_MEMORY;
+        }
+
+        UINT Hash = _FileCheckHashLine(Text, Length, Flags);
+        if (!_FileCheckLineArrayAppend(LineArray, Text, Length, Hash))
+        {
+            HeapFree(GetProcessHeap(), 0, Text);
+            _FileCheckLineArrayFree(LineArray);
+            return FC_ERROR_MEMORY;
+        }
+
+        while (Newline < End && (*Newline == '\n' || *Newline == '\r'))
+        {
+            Newline++;
+        }
+        Ptr = Newline;
+    }
+    return FC_OK;
+}
+
+static inline FC_RESULT
+_FileCheckCompareLineArrays(
+    _In_ const FC_LINE_ARRAY* ArrayA,
+    _In_ const FC_LINE_ARRAY* ArrayB,
+    _In_ const FC_CONFIG* Config)
+{
+    size_t Count = min(ArrayA->Count, ArrayB->Count);
+    for (size_t i = 0; i < Count; ++i)
+    {
+        const FC_LINE* LineA = &ArrayA->Lines[i];
+        const FC_LINE* LineB = &ArrayB->Lines[i];
+        if (LineA->Hash != LineB->Hash ||
+            LineA->Length != LineB->Length ||
+            RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+        {
+            if (Config->Output != NULL)
+            {
+                Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
+            }
+            return FC_DIFFERENT;
+        }
     }
 
-#ifndef FC_CHUNK_SIZE
-#define FC_CHUNK_SIZE (64*1024)
-#endif
-
-    /* Compare LineArrays */
-    static inline fc_result_t compare_line_arrays(const LineArray* A,
-        const LineArray* B,
-        const fc_config_t* cfg) {
-        size_t n = A->count < B->count ? A->count : B->count;
-        for (size_t i = 0; i < n; ++i) {
-            const Line* la = &A->lines[i];
-            const Line* lb = &B->lines[i];
-            if (la->hash != lb->hash || la->len != lb->len ||
-                memcmp(la->text, lb->text, la->len) != 0) {
-                if (cfg->output) {
-                    cfg->output(cfg->user_data,
-                        "Line differs",
-                        (int)(i + 1), (int)(i + 1));
-                }
-                return FC_DIFFERENT;
-            }
+    if (ArrayA->Count != ArrayB->Count)
+    {
+        if (Config->Output != NULL)
+        {
+            Config->Output(Config->UserData, "Files have different line counts", -1, -1);
         }
-        return (A->count == B->count) ? FC_OK : FC_DIFFERENT;
+        return FC_DIFFERENT;
     }
 
-    /* Compare files on disk */
-    /*
-     * Compare two files on disk.
-     * Thread Safety:
-     *   - Allocates independent file handles and mappings per call.
-     *   - Frees all resources before returning.
-     *   - No shared mutable state: reentrant and atomic per invocation.
-     *   - Ensure fc_output_cb is thread-safe if used concurrently.
-     */
-    static inline fc_result_t fc_compare_files(const char* path1,
-        const char* path2,
-        const fc_config_t* cfg) {
-        if (!path1 || !path2 || !cfg)
-            return FC_ERROR_INVALID_PARAM;
-        if (cfg->mode == FC_MODE_BINARY) {
-            /* Memory-mapped binary comparison */
-            HANDLE h1 = CreateFileA(path1, GENERIC_READ, FILE_SHARE_READ,
-                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            HANDLE h2 = CreateFileA(path2, GENERIC_READ, FILE_SHARE_READ,
-                NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-            if (h1 == INVALID_HANDLE_VALUE || h2 == INVALID_HANDLE_VALUE) {
-                if (h1 != INVALID_HANDLE_VALUE) CloseHandle(h1);
-                if (h2 != INVALID_HANDLE_VALUE) CloseHandle(h2);
-                return FC_ERROR_IO;
+    return FC_OK;
+}
+
+static inline char*
+_FileCheckReadFileContents(
+    _In_ const WCHAR* Path,
+    _Out_ size_t* OutputLength,
+    _Out_ FC_RESULT* Result)
+{
+    HANDLE FileHandle = CreateFileW(Path,
+                                    GENERIC_READ,
+                                    FILE_SHARE_READ,
+                                    NULL,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    NULL);
+    if (FileHandle == INVALID_HANDLE_VALUE)
+    {
+        *Result = FC_ERROR_IO;
+        return NULL;
+    }
+
+    LARGE_INTEGER FileSize;
+    if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1)
+    {
+        CloseHandle(FileHandle);
+        *Result = FC_ERROR_IO;
+        return NULL;
+    }
+
+    size_t Length = (size_t)FileSize.QuadPart;
+    char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length);
+    if (Buffer == NULL)
+    {
+        CloseHandle(FileHandle);
+        *Result = FC_ERROR_MEMORY;
+        return NULL;
+    }
+
+    DWORD BytesRead;
+    if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length)
+    {
+        HeapFree(GetProcessHeap(), 0, Buffer);
+        CloseHandle(FileHandle);
+        *Result = FC_ERROR_IO;
+        return NULL;
+    }
+
+    CloseHandle(FileHandle);
+    *OutputLength = Length;
+    *Result = FC_OK;
+    return Buffer;
+}
+
+//
+// Main Implementation
+//
+
+FC_RESULT
+FileCheckCompareFilesUtf8(
+    _In_ const char* Path1Utf8,
+    _In_ const char* Path2Utf8,
+    _In_ const FC_CONFIG* Config)
+{
+    if (Path1Utf8 == NULL || Path2Utf8 == NULL)
+    {
+        return FC_ERROR_INVALID_PARAM;
+    }
+
+    int WideLength1 = MultiByteToWideChar(CP_UTF8, 0, Path1Utf8, -1, NULL, 0);
+    if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
+    WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
+    if (WidePath1 == NULL) return FC_ERROR_MEMORY;
+    MultiByteToWideChar(CP_UTF8, 0, Path1Utf8, -1, WidePath1, WideLength1);
+
+    int WideLength2 = MultiByteToWideChar(CP_UTF8, 0, Path2Utf8, -1, NULL, 0);
+    if (WideLength2 == 0)
+    {
+        HeapFree(GetProcessHeap(), 0, WidePath1);
+        return FC_ERROR_INVALID_PARAM;
+    }
+    WCHAR* WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
+    if (WidePath2 == NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, WidePath1);
+        return FC_ERROR_MEMORY;
+    }
+    MultiByteToWideChar(CP_UTF8, 0, Path2Utf8, -1, WidePath2, WideLength2);
+
+    FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
+
+    HeapFree(GetProcessHeap(), 0, WidePath1);
+    HeapFree(GetProcessHeap(), 0, WidePath2);
+    return Result;
+}
+
+FC_RESULT
+FileCheckCompareFilesW(
+    _In_ const WCHAR* Path1,
+    _In_ const WCHAR* Path2,
+    _In_ const FC_CONFIG* Config)
+{
+    if (Path1 == NULL || Path2 == NULL || Config == NULL)
+    {
+        return FC_ERROR_INVALID_PARAM;
+    }
+
+    WCHAR* LongPath1 = _FileCheckCreateLongPathW(Path1);
+    WCHAR* LongPath2 = _FileCheckCreateLongPathW(Path2);
+    if (LongPath1 == NULL || LongPath2 == NULL)
+    {
+        if (LongPath1 != NULL) HeapFree(GetProcessHeap(), 0, LongPath1);
+        if (LongPath2 != NULL) HeapFree(GetProcessHeap(), 0, LongPath2);
+        return FC_ERROR_MEMORY;
+    }
+
+    FC_RESULT Result = _FileCheckCompareFilesImpl(LongPath1, LongPath2, Config);
+
+    HeapFree(GetProcessHeap(), 0, LongPath1);
+    HeapFree(GetProcessHeap(), 0, LongPath2);
+    return Result;
+}
+
+static FC_RESULT
+_FileCheckCompareFilesImpl(
+    _In_ const WCHAR* Path1,
+    _In_ const WCHAR* Path2,
+    _In_ const FC_CONFIG* Config)
+{
+    if (Config->Mode == FC_MODE_BINARY)
+    {
+        HANDLE File1Handle = CreateFileW(Path1, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        HANDLE File2Handle = CreateFileW(Path2, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+        if (File1Handle == INVALID_HANDLE_VALUE || File2Handle == INVALID_HANDLE_VALUE)
+        {
+            if (File1Handle != INVALID_HANDLE_VALUE) CloseHandle(File1Handle);
+            if (File2Handle != INVALID_HANDLE_VALUE) CloseHandle(File2Handle);
+            return FC_ERROR_IO;
+        }
+
+        LARGE_INTEGER File1Size, File2Size;
+        if (!GetFileSizeEx(File1Handle, &File1Size) || !GetFileSizeEx(File2Handle, &File2Size))
+        {
+            CloseHandle(File1Handle);
+            CloseHandle(File2Handle);
+            return FC_ERROR_IO;
+        }
+
+        if (File1Size.QuadPart != File2Size.QuadPart)
+        {
+            if (Config->Output != NULL)
+            {
+                Config->Output(Config->UserData, "Files are different sizes", -1, -1);
             }
-            LARGE_INTEGER size1, size2;
-            if (!GetFileSizeEx(h1, &size1) || !GetFileSizeEx(h2, &size2)) {
-                CloseHandle(h1); CloseHandle(h2);
-                return FC_ERROR_IO;
-            }
-            size_t sz1 = (size_t)size1.QuadPart;
-            size_t sz2 = (size_t)size2.QuadPart;
-            size_t cmp_sz = sz1 < sz2 ? sz1 : sz2;
-            HANDLE m1 = CreateFileMapping(h1, NULL, PAGE_READONLY,
-                (DWORD)(size1.QuadPart >> 32),
-                (DWORD)(size1.QuadPart & 0xFFFFFFFF), NULL);
-            HANDLE m2 = CreateFileMapping(h2, NULL, PAGE_READONLY,
-                (DWORD)(size2.QuadPart >> 32),
-                (DWORD)(size2.QuadPart & 0xFFFFFFFF), NULL);
-            if (!m1 || !m2) {
-                if (m1) CloseHandle(m1); if (m2) CloseHandle(m2);
-                CloseHandle(h1); CloseHandle(h2);
-                return FC_ERROR_IO;
-            }
-            unsigned char* b1 = (unsigned char*)MapViewOfFile(m1, FILE_MAP_READ, 0, 0, cmp_sz);
-            unsigned char* b2 = (unsigned char*)MapViewOfFile(m2, FILE_MAP_READ, 0, 0, cmp_sz);
-            if (!b1 || !b2) {
-                if (b1) UnmapViewOfFile(b1); if (b2) UnmapViewOfFile(b2);
-                CloseHandle(m1); CloseHandle(m2);
-                CloseHandle(h1); CloseHandle(h2);
-                return FC_ERROR_IO;
-            }
-            size_t wcount = cmp_sz / sizeof(uintptr_t);
-            const uintptr_t* w1 = (const uintptr_t*)b1;
-            const uintptr_t* w2 = (const uintptr_t*)b2;
-            for (size_t i = 0; i < wcount; ++i) {
-                if (w1[i] != w2[i]) {
-                    size_t base = i * sizeof(uintptr_t);
-                    for (size_t j = 0; j < sizeof(uintptr_t); ++j) {
-                        if (b1[base + j] != b2[base + j]) {
-                            if (cfg->output) {
-                                char msg[64];
-                                snprintf(msg, sizeof(msg),
-                                    "Binary diff at offset 0x%zx", base + j);
-                                cfg->output(cfg->user_data, msg, -1, -1);
-                            }
-                            UnmapViewOfFile(b1); UnmapViewOfFile(b2);
-                            CloseHandle(m1); CloseHandle(m2);
-                            CloseHandle(h1); CloseHandle(h2);
-                            return FC_DIFFERENT;
-                        }
+            CloseHandle(File1Handle);
+            CloseHandle(File2Handle);
+            return FC_DIFFERENT;
+        }
+
+        size_t CompareSize = (size_t)File1Size.QuadPart;
+        HANDLE Map1Handle = CreateFileMapping(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+        HANDLE Map2Handle = CreateFileMapping(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+
+        if (Map1Handle == NULL || Map2Handle == NULL)
+        {
+            if (Map1Handle != NULL) CloseHandle(Map1Handle);
+            if (Map2Handle != NULL) CloseHandle(Map2Handle);
+            CloseHandle(File1Handle);
+            CloseHandle(File2Handle);
+            return FC_ERROR_IO;
+        }
+
+        unsigned char* Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
+        unsigned char* Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
+
+        if (Buffer1 == NULL || Buffer2 == NULL)
+        {
+            if (Buffer1 != NULL) UnmapViewOfFile(Buffer1);
+            if (Buffer2 != NULL) UnmapViewOfFile(Buffer2);
+            CloseHandle(Map1Handle);
+            CloseHandle(Map2Handle);
+            CloseHandle(File1Handle);
+            CloseHandle(File2Handle);
+            return FC_ERROR_IO;
+        }
+
+        FC_RESULT Result = FC_OK;
+        if (RtlCompareMemory(Buffer1, Buffer2, CompareSize) != CompareSize)
+        {
+            Result = FC_DIFFERENT;
+            if (Config->Output != NULL)
+            {
+                for (size_t i = 0; i < CompareSize; ++i)
+                {
+                    if (Buffer1[i] != Buffer2[i])
+                    {
+                        char Message[64] = "Binary diff at offset 0x";
+                        char HexBuffer[17];
+                        _FileCheckIntegerToHex(i, HexBuffer);
+
+                        char* Ptr = Message;
+                        while (*Ptr) Ptr++;
+                        char* Source = HexBuffer;
+                        while (*Source) *Ptr++ = *Source++;
+                        *Ptr = '\0';
+
+                        Config->Output(Config->UserData, Message, -1, -1);
+                        break;
                     }
                 }
             }
-            size_t offset = wcount * sizeof(uintptr_t);
-            for (size_t i = offset; i < cmp_sz; ++i) {
-                if (b1[i] != b2[i]) {
-                    if (cfg->output) {
-                        char msg[64];
-                        snprintf(msg, sizeof(msg),
-                            "Binary diff at offset 0x%zx", i);
-                        cfg->output(cfg->user_data, msg, -1, -1);
-                    }
-                    UnmapViewOfFile(b1); UnmapViewOfFile(b2);
-                    CloseHandle(m1); CloseHandle(m2);
-                    CloseHandle(h1); CloseHandle(h2);
-                    return FC_DIFFERENT;
-                }
-            }
-            UnmapViewOfFile(b1); UnmapViewOfFile(b2);
-            CloseHandle(m1); CloseHandle(m2);
-            CloseHandle(h1); CloseHandle(h2);
-            return sz1 == sz2 ? FC_OK : FC_DIFFERENT;
         }
-        else {
-            /* Text comparison */
-            size_t len1, len2;
-            fc_result_t err1, err2;
-            char* buf1 = fc_read_file(path1, &len1, &err1);
-            if (!buf1) return err1;
-            char* buf2 = fc_read_file(path2, &len2, &err2);
-            if (!buf2) { free(buf1); return err2; }
-            LineArray A, B;
-            fc_result_t r1 = parse_lines_array(buf1, len1, &A, cfg->flags);
-            fc_result_t r2 = parse_lines_array(buf2, len2, &B, cfg->flags);
-            free(buf1); free(buf2);
-            if (r1 != FC_OK || r2 != FC_OK) {
-                la_free(&A); la_free(&B);
-                return FC_ERROR_MEMORY;
-            }
-            fc_result_t res = compare_line_arrays(&A, &B, cfg);
-            la_free(&A); la_free(&B);
-            return res;
-        }
+
+        UnmapViewOfFile(Buffer1);
+        UnmapViewOfFile(Buffer2);
+        CloseHandle(Map1Handle);
+        CloseHandle(Map2Handle);
+        CloseHandle(File1Handle);
+        CloseHandle(File2Handle);
+        return Result;
     }
+    else // FC_MODE_TEXT
+    {
+        size_t Length1, Length2;
+        FC_RESULT Result1, Result2;
+
+        char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
+        if (Buffer1 == NULL)
+        {
+            return Result1;
+        }
+
+        char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
+        if (Buffer2 == NULL)
+        {
+            HeapFree(GetProcessHeap(), 0, Buffer1);
+            return Result2;
+        }
+
+        FC_LINE_ARRAY ArrayA, ArrayB;
+        Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config->Flags);
+        HeapFree(GetProcessHeap(), 0, Buffer1);
+        if (Result1 != FC_OK)
+        {
+            HeapFree(GetProcessHeap(), 0, Buffer2);
+            return FC_ERROR_MEMORY;
+        }
+
+        Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config->Flags);
+        HeapFree(GetProcessHeap(), 0, Buffer2);
+        if (Result2 != FC_OK)
+        {
+            _FileCheckLineArrayFree(&ArrayA);
+            return FC_ERROR_MEMORY;
+        }
+
+        FC_RESULT Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+        _FileCheckLineArrayFree(&ArrayA);
+        _FileCheckLineArrayFree(&ArrayB);
+        return Result;
+    }
+}
 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* FILECHECK_H */
