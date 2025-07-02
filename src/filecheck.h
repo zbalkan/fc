@@ -451,8 +451,14 @@ FileCheckCompareFilesUtf8(
     if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
     WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
     if (WidePath1 == NULL) return FC_ERROR_MEMORY;
-    MultiByteToWideChar(CP_UTF8, 0, Path1Utf8, -1, WidePath1, WideLength1);
-
+    // Use MB_ERR_INVALID_CHARS and check for failure
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                             Path1Utf8, -1,
+                             WidePath1, WideLength1) == 0)
+    {
+        HeapFree(GetProcessHeap(), 0, WidePath1);
+        return FC_ERROR_INVALID_PARAM;
+    }
     int WideLength2 = MultiByteToWideChar(CP_UTF8, 0, Path2Utf8, -1, NULL, 0);
     if (WideLength2 == 0)
     {
@@ -465,8 +471,15 @@ FileCheckCompareFilesUtf8(
         HeapFree(GetProcessHeap(), 0, WidePath1);
         return FC_ERROR_MEMORY;
     }
-    MultiByteToWideChar(CP_UTF8, 0, Path2Utf8, -1, WidePath2, WideLength2);
-
+    // Likewise validate the second conversion
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                             Path2Utf8, -1,
+                             WidePath2, WideLength2) == 0)
+    {
+        HeapFree(GetProcessHeap(), 0, WidePath1);
+        HeapFree(GetProcessHeap(), 0, WidePath2);
+        return FC_ERROR_INVALID_PARAM;
+    }
     FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
 
     HeapFree(GetProcessHeap(), 0, WidePath1);
