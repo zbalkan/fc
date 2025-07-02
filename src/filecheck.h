@@ -43,7 +43,7 @@ typedef enum
 #define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
 #define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
 #define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
-#define FC_UNICODE_TEXT     0x0010  // Treat files as UTF-16 text.
+#define FC_UNICODE_TEXT     0x0010  // Use Unicode-aware case-insensitivity.
 
 /**
  * @brief Callback function for reporting comparison differences.
@@ -146,6 +146,58 @@ _FileCheckToLowerAscii(
     return Character;
 }
 
+//
+// Unicode-aware (UTF-8) string lowercasing function.
+// Returns a new, heap-allocated lowercase string. The caller must free it.
+//
+static inline char*
+_FileCheckStringToLowerUnicode(
+    _In_reads_(SourceLength) const char* Source,
+    _In_ size_t SourceLength,
+    _Out_ size_t* NewLength)
+{
+    if (SourceLength == 0)
+    {
+        *NewLength = 0;
+        return _FileCheckStringDuplicateRange("", 0);
+    }
+
+    // Convert source UTF-8 to a temporary UTF-16 buffer
+    int WideLength = MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, NULL, 0);
+    if (WideLength == 0) return NULL;
+
+    WCHAR* WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength * sizeof(WCHAR));
+    if (WideBuffer == NULL) return NULL;
+
+    MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, WideBuffer, WideLength);
+
+    // Perform Unicode-aware lowercase conversion in-place on the UTF-16 buffer
+    CharLowerW(WideBuffer);
+
+    // Get the required buffer size for the final lowercase UTF-8 string
+    int Utf8Length = WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, NULL, 0, NULL, NULL);
+    if (Utf8Length == 0)
+    {
+        HeapFree(GetProcessHeap(), 0, WideBuffer);
+        return NULL;
+    }
+
+    char* DestBuffer = (char*)HeapAlloc(GetProcessHeap(), 0, (size_t)Utf8Length + 1);
+    if (DestBuffer == NULL)
+    {
+        HeapFree(GetProcessHeap(), 0, WideBuffer);
+        return NULL;
+    }
+
+    // Convert the lowercase UTF-16 buffer back to UTF-8
+    WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, DestBuffer, Utf8Length, NULL, NULL);
+    DestBuffer[Utf8Length] = '\0'; // Null-terminate
+
+    HeapFree(GetProcessHeap(), 0, WideBuffer);
+    *NewLength = (size_t)Utf8Length;
+    return DestBuffer;
+}
+
 static inline void
 _FileCheckIntegerToHex(
     size_t Value,
@@ -243,18 +295,55 @@ _FileCheckHashLine(
     _In_ UINT Flags)
 {
     UINT Hash = 0;
-    for (size_t i = 0; i < Length; ++i)
+
+    // Fast path for default case-sensitive comparison
+    if (!(Flags & FC_IGNORE_CASE))
     {
-        unsigned char Character = (unsigned char)String[i];
-        if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+        for (size_t i = 0; i < Length; ++i)
         {
-            continue;
+            unsigned char Character = (unsigned char)String[i];
+            if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+            {
+                continue;
+            }
+            Hash = Hash * 31 + Character;
         }
-        if (Flags & FC_IGNORE_CASE)
+        return Hash;
+    }
+
+    // Case-insensitive comparison paths
+    if (Flags & FC_UNICODE_TEXT)
+    {
+        // Correct, but slower, Unicode-aware path
+        size_t LowerLength;
+        char* LowerString = _FileCheckStringToLowerUnicode(String, Length, &LowerLength);
+        if (LowerString != NULL)
         {
+            for (size_t i = 0; i < LowerLength; ++i)
+            {
+                unsigned char Character = (unsigned char)LowerString[i];
+                if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+                {
+                    continue;
+                }
+                Hash = Hash * 31 + Character;
+            }
+            HeapFree(GetProcessHeap(), 0, LowerString);
+        }
+    }
+    else
+    {
+        // Fast, but ASCII-only, path
+        for (size_t i = 0; i < Length; ++i)
+        {
+            unsigned char Character = (unsigned char)String[i];
+            if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+            {
+                continue;
+            }
             Character = _FileCheckToLowerAscii(Character);
+            Hash = Hash * 31 + Character;
         }
-        Hash = Hash * 31 + Character;
     }
     return Hash;
 }
@@ -357,15 +446,31 @@ _FileCheckCompareLineArrays(
     {
         const FC_LINE* LineA = &ArrayA->Lines[i];
         const FC_LINE* LineB = &ArrayB->Lines[i];
-        if (LineA->Hash != LineB->Hash ||
-            LineA->Length != LineB->Length ||
-            RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+
+        // Hash is the primary comparison mechanism.
+        if (LineA->Hash != LineB->Hash)
         {
             if (Config->Output != NULL)
             {
                 Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
             }
             return FC_DIFFERENT;
+        }
+
+        // If case is ignored, the original text will not match, so we can't
+        // reliably use memcmp as a final check against hash collisions.
+        // We only do a final binary check if case is NOT ignored.
+        if (!(Config->Flags & FC_IGNORE_CASE))
+        {
+            if (LineA->Length != LineB->Length ||
+                RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+            {
+                if (Config->Output != NULL)
+                {
+                    Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
+                }
+                return FC_DIFFERENT;
+            }
         }
     }
 
