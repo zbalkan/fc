@@ -447,7 +447,7 @@ FileCheckCompareFilesUtf8(
         return FC_ERROR_INVALID_PARAM;
     }
 
-    int WideLength1 = MultiByteToWideChar(CP_UTF8, 0, Path1Utf8, -1, NULL, 0);
+    int WideLength1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, NULL, 0);
     if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
     WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
     if (WidePath1 == NULL) return FC_ERROR_MEMORY;
@@ -459,7 +459,7 @@ FileCheckCompareFilesUtf8(
         HeapFree(GetProcessHeap(), 0, WidePath1);
         return FC_ERROR_INVALID_PARAM;
     }
-    int WideLength2 = MultiByteToWideChar(CP_UTF8, 0, Path2Utf8, -1, NULL, 0);
+    int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
     if (WideLength2 == 0)
     {
         HeapFree(GetProcessHeap(), 0, WidePath1);
