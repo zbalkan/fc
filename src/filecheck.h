@@ -54,10 +54,10 @@ typedef enum
  * @param Line2     The line number in the second file, or -1 if not applicable.
  */
 typedef void (*FC_OUTPUT_CALLBACK)(
-    void* UserData,
-    const char* Message,
-    int Line1,
-    int Line2);
+    _In_opt_ void* UserData,
+    _In_z_ const char* Message,
+    _In_ int Line1,
+    _In_ int Line2);
 
 //
 // Configuration structure for a file comparison operation.
@@ -88,8 +88,8 @@ typedef struct
  */
 FC_RESULT
 FileCheckCompareFilesW(
-    _In_ const WCHAR* Path1,
-    _In_ const WCHAR* Path2,
+    _In_z_ const WCHAR* Path1,
+    _In_z_ const WCHAR* Path2,
     _In_ const FC_CONFIG* Config);
 
 /**
@@ -105,8 +105,8 @@ FileCheckCompareFilesW(
  */
 FC_RESULT
 FileCheckCompareFilesUtf8(
-    _In_ const char* Path1Utf8,
-    _In_ const char* Path2Utf8,
+    _In_z_ const char* Path1Utf8,
+    _In_z_ const char* Path2Utf8,
     _In_ const FC_CONFIG* Config);
 
 
@@ -131,8 +131,8 @@ typedef struct _FC_LINE_ARRAY
 // Forward declaration for the main implementation function.
 static FC_RESULT
 _FileCheckCompareFilesImpl(
-    _In_ const WCHAR* Path1,
-    _In_ const WCHAR* Path2,
+    _In_z_ const WCHAR* Path1,
+    _In_z_ const WCHAR* Path2,
     _In_ const FC_CONFIG* Config);
 
 static inline unsigned char
@@ -149,7 +149,7 @@ _FileCheckToLowerAscii(
 static inline void
 _FileCheckIntegerToHex(
     size_t Value,
-    char* OutputBuffer)
+    _Out_writes_z_(17) char* OutputBuffer) // SAL: Buffer must hold at least 17 chars.
 {
     const char* HexDigits = "0123456789abcdef";
     char TempBuffer[16];
@@ -178,7 +178,7 @@ _FileCheckIntegerToHex(
 
 static inline WCHAR*
 _FileCheckCreateLongPathW(
-    _In_ const WCHAR* Path)
+    _In_z_ const WCHAR* Path)
 {
     size_t Length = 0;
     const WCHAR* Ptr = Path;
@@ -238,7 +238,7 @@ _FileCheckLineArrayFree(
 
 static inline UINT
 _FileCheckHashLine(
-    _In_ const char* String,
+    _In_reads_(Length) const char* String,
     _In_ size_t Length,
     _In_ UINT Flags)
 {
@@ -261,7 +261,7 @@ _FileCheckHashLine(
 
 static inline char*
 _FileCheckStringDuplicateRange(
-    _In_ const char* String,
+    _In_reads_(Length) const char* String,
     _In_ size_t Length)
 {
     char* Output = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
@@ -277,7 +277,7 @@ _FileCheckStringDuplicateRange(
 static inline BOOL
 _FileCheckLineArrayAppend(
     _Inout_ FC_LINE_ARRAY* LineArray,
-    _In_ char* Text,
+    _In_ _Post_invalid_ char* Text, // Text ownership is transferred
     _In_ size_t Length,
     _In_ UINT Hash)
 {
@@ -304,7 +304,7 @@ _FileCheckLineArrayAppend(
 
 static inline FC_RESULT
 _FileCheckParseLines(
-    _In_ const char* Buffer,
+    _In_reads_(BufferLength) const char* Buffer,
     _In_ size_t BufferLength,
     _Inout_ FC_LINE_ARRAY* LineArray,
     _In_ UINT Flags)
@@ -383,7 +383,7 @@ _FileCheckCompareLineArrays(
 
 static inline char*
 _FileCheckReadFileContents(
-    _In_ const WCHAR* Path,
+    _In_z_ const WCHAR* Path,
     _Out_ size_t* OutputLength,
     _Out_ FC_RESULT* Result)
 {
@@ -438,8 +438,8 @@ _FileCheckReadFileContents(
 
 FC_RESULT
 FileCheckCompareFilesUtf8(
-    _In_ const char* Path1Utf8,
-    _In_ const char* Path2Utf8,
+    _In_z_ const char* Path1Utf8,
+    _In_z_ const char* Path2Utf8,
     _In_ const FC_CONFIG* Config)
 {
     if (Path1Utf8 == NULL || Path2Utf8 == NULL)
@@ -451,14 +451,12 @@ FileCheckCompareFilesUtf8(
     if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
     WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
     if (WidePath1 == NULL) return FC_ERROR_MEMORY;
-    // Use MB_ERR_INVALID_CHARS and check for failure
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                             Path1Utf8, -1,
-                             WidePath1, WideLength1) == 0)
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, WidePath1, WideLength1) == 0)
     {
         HeapFree(GetProcessHeap(), 0, WidePath1);
         return FC_ERROR_INVALID_PARAM;
     }
+
     int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
     if (WideLength2 == 0)
     {
@@ -471,15 +469,13 @@ FileCheckCompareFilesUtf8(
         HeapFree(GetProcessHeap(), 0, WidePath1);
         return FC_ERROR_MEMORY;
     }
-    // Likewise validate the second conversion
-    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-                             Path2Utf8, -1,
-                             WidePath2, WideLength2) == 0)
+    if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, WidePath2, WideLength2) == 0)
     {
         HeapFree(GetProcessHeap(), 0, WidePath1);
         HeapFree(GetProcessHeap(), 0, WidePath2);
         return FC_ERROR_INVALID_PARAM;
     }
+
     FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
 
     HeapFree(GetProcessHeap(), 0, WidePath1);
@@ -489,8 +485,8 @@ FileCheckCompareFilesUtf8(
 
 FC_RESULT
 FileCheckCompareFilesW(
-    _In_ const WCHAR* Path1,
-    _In_ const WCHAR* Path2,
+    _In_z_ const WCHAR* Path1,
+    _In_z_ const WCHAR* Path2,
     _In_ const FC_CONFIG* Config)
 {
     if (Path1 == NULL || Path2 == NULL || Config == NULL)
@@ -516,8 +512,8 @@ FileCheckCompareFilesW(
 
 static FC_RESULT
 _FileCheckCompareFilesImpl(
-    _In_ const WCHAR* Path1,
-    _In_ const WCHAR* Path2,
+    _In_z_ const WCHAR* Path1,
+    _In_z_ const WCHAR* Path2,
     _In_ const FC_CONFIG* Config)
 {
     if (Config->Mode == FC_MODE_BINARY)
@@ -579,30 +575,32 @@ _FileCheckCompareFilesImpl(
         }
 
         FC_RESULT Result = FC_OK;
-        if (RtlCompareMemory(Buffer1, Buffer2, CompareSize) != CompareSize)
+        size_t FirstDifference = (size_t)-1;
+
+        // Consolidated loop to find the first difference.
+        for (size_t i = 0; i < CompareSize; ++i)
         {
-            Result = FC_DIFFERENT;
-            if (Config->Output != NULL)
+            if (Buffer1[i] != Buffer2[i])
             {
-                for (size_t i = 0; i < CompareSize; ++i)
-                {
-                    if (Buffer1[i] != Buffer2[i])
-                    {
-                        char Message[64] = "Binary diff at offset 0x";
-                        char HexBuffer[17];
-                        _FileCheckIntegerToHex(i, HexBuffer);
-
-                        char* Ptr = Message;
-                        while (*Ptr) Ptr++;
-                        char* Source = HexBuffer;
-                        while (*Source) *Ptr++ = *Source++;
-                        *Ptr = '\0';
-
-                        Config->Output(Config->UserData, Message, -1, -1);
-                        break;
-                    }
-                }
+                FirstDifference = i;
+                Result = FC_DIFFERENT;
+                break;
             }
+        }
+
+        if (Result == FC_DIFFERENT && Config->Output != NULL)
+        {
+            char Message[64] = "Binary diff at offset 0x";
+            char HexBuffer[17];
+            _FileCheckIntegerToHex(FirstDifference, HexBuffer);
+
+            char* Ptr = Message;
+            while (*Ptr) Ptr++;
+            char* Source = HexBuffer;
+            while (*Source) *Ptr++ = *Source++;
+            *Ptr = '\0';
+
+            Config->Output(Config->UserData, Message, -1, -1);
         }
 
         UnmapViewOfFile(Buffer1);
