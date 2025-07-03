@@ -90,8 +90,9 @@ wmain(
             // Check for numeric resync line option (e.g., /20)
             if (iswdigit(Option[1]))
             {
+                errno = 0; // Clear errno before call
                 unsigned long Value = wcstoul(Option + 1, &EndPtr, 10);
-                if (*EndPtr != L'\0' || Value == 0) // Must consume entire string and be non-zero
+                if (*EndPtr != L'\0' || Value == 0 || errno == ERANGE) // Must consume entire string, be non-zero, and not overflow/underflow
                 {
                     wprintf(L"Invalid numeric option: %s\n", Option);
                     return -1;
@@ -101,8 +102,9 @@ wmain(
             // Check for buffer line option (e.g., /LB100)
             else if (wcsncmp(Option + 1, L"LB", 2) == 0 && iswdigit(Option[3]))
             {
+                errno = 0; // Clear errno before call
                 unsigned long Value = wcstoul(Option + 3, &EndPtr, 10);
-                if (*EndPtr != L'\0' || Value == 0) // Must consume entire string and be non-zero
+                if (*EndPtr != L'\0' || Value == 0 || errno == ERANGE) // Must consume entire string, be non-zero, and not overflow/underflow
                 {
                     wprintf(L"Invalid numeric option: %s\n", Option);
                     return -1;
