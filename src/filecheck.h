@@ -146,6 +146,21 @@ _FileCheckToLowerAscii(
     return Character;
 }
 
+static inline char*
+_FileCheckStringDuplicateRange(
+    _In_reads_(Length) const char* String,
+    _In_ size_t Length)
+{
+    char* Output = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+    if (Output == NULL)
+    {
+        return NULL;
+    }
+    CopyMemory(Output, String, Length);
+    Output[Length] = '\0';
+    return Output;
+}
+
 //
 // Unicode-aware (UTF-8) string lowercasing function.
 // Returns a new, heap-allocated lowercase string. The caller must free it.
@@ -348,21 +363,6 @@ _FileCheckHashLine(
     return Hash;
 }
 
-static inline char*
-_FileCheckStringDuplicateRange(
-    _In_reads_(Length) const char* String,
-    _In_ size_t Length)
-{
-    char* Output = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
-    if (Output == NULL)
-    {
-        return NULL;
-    }
-    CopyMemory(Output, String, Length);
-    Output[Length] = '\0';
-    return Output;
-}
-
 static inline BOOL
 _FileCheckLineArrayAppend(
     _Inout_ FC_LINE_ARRAY* LineArray,
@@ -445,7 +445,7 @@ _FileCheckExpandTabs(
     *NewLength = DestIndex;
 
     return Dest;
-} 
+}
 
 static inline FC_RESULT
 _FileCheckParseLines(
