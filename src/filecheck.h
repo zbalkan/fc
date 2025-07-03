@@ -391,6 +391,62 @@ _FileCheckLineArrayAppend(
     return TRUE;
 }
 
+//
+// Helper function to expand tabs to spaces.
+// Returns a new, heap-allocated string. The caller must free it.
+//
+static inline char*
+_FileCheckExpandTabs(
+    _In_reads_(SourceLength) const char* Source,
+    _In_ size_t SourceLength,
+    _Out_ size_t* NewLength)
+{
+    #define TAB_WIDTH 8
+    size_t ExpandedLength = 0;
+    for (size_t i = 0; i < SourceLength; ++i)
+    {
+        if (Source[i] == '\t')
+        {
+            ExpandedLength += TAB_WIDTH - (ExpandedLength % TAB_WIDTH);
+        }
+        else
+        {
+            ExpandedLength++;
+        }
+    }
+
+    if (ExpandedLength == SourceLength)
+    {
+        // No tabs found, just duplicate the original string
+        *NewLength = SourceLength;
+        return _FileCheckStringDuplicateRange(Source, SourceLength);
+    }
+
+    char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
+    if (Dest == NULL) return NULL;
+
+    size_t DestIndex = 0;
+    for (size_t i = 0; i < SourceLength; ++i)
+    {
+        if (Source[i] == '\t')
+        {
+            size_t SpacesToAdd = TAB_WIDTH - (DestIndex % TAB_WIDTH);
+            for (size_t s = 0; s < SpacesToAdd; ++s)
+            {
+                Dest[DestIndex++] = ' ';
+            }
+        }
+        else
+        {
+            Dest[DestIndex++] = Source[i];
+        }
+    }
+    Dest[DestIndex] = '\0';
+    *NewLength = DestIndex;
+
+    return Dest;
+} 
+
 static inline FC_RESULT
 _FileCheckParseLines(
     _In_reads_(BufferLength) const char* Buffer,
@@ -410,18 +466,33 @@ _FileCheckParseLines(
             Newline++;
         }
 
-        size_t Length = (size_t)(Newline - Ptr);
-        char* Text = _FileCheckStringDuplicateRange(Ptr, Length);
-        if (Text == NULL)
+        size_t OriginalLength = (size_t)(Newline - Ptr);
+        char* LineText = _FileCheckStringDuplicateRange(Ptr, OriginalLength);
+        if (LineText == NULL)
         {
             _FileCheckLineArrayFree(LineArray);
             return FC_ERROR_MEMORY;
         }
 
-        UINT Hash = _FileCheckHashLine(Text, Length, Flags);
-        if (!_FileCheckLineArrayAppend(LineArray, Text, Length, Hash))
+        size_t FinalLength = OriginalLength;
+        char* FinalText = LineText;
+
+        // Expand tabs if FC_RAW_TABS is not set
+        if (!(Flags & FC_RAW_TABS))
         {
-            HeapFree(GetProcessHeap(), 0, Text);
+            FinalText = _FileCheckExpandTabs(LineText, OriginalLength, &FinalLength);
+            HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
+            if (FinalText == NULL)
+            {
+                _FileCheckLineArrayFree(LineArray);
+                return FC_ERROR_MEMORY;
+            }
+        }
+
+        UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Flags);
+        if (!_FileCheckLineArrayAppend(LineArray, FinalText, FinalLength, Hash))
+        {
+            HeapFree(GetProcessHeap(), 0, FinalText);
             _FileCheckLineArrayFree(LineArray);
             return FC_ERROR_MEMORY;
         }
