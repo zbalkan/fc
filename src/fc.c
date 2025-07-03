@@ -8,13 +8,13 @@
 
 #include "filecheck.h"
 #include <stdio.h>
-#include <stdlib.h>
-#include <wchar.h>
-#include <ctype.h>
+#include <stdlib.h> // For wcstoul
+#include <wchar.h>  // For wcsncmp, wprintf
+#include <ctype.h>  // For iswdigit, towupper
 
-//
-// Default callback to print comparison results to the console.
-//
+ //
+ // Default callback to print comparison results to the console.
+ //
 static void
 DefaultOutputCallback(
     _In_opt_ void* UserData,
@@ -69,7 +69,7 @@ wmain(
         return -1; // Syntax error
     }
 
-    FC_CONFIG Config = {0}; // Initialize all fields to zero
+    FC_CONFIG Config = { 0 }; // Initialize all fields to zero
 
     // Set defaults
     Config.Mode = FC_MODE_TEXT;
@@ -83,46 +83,60 @@ wmain(
     for (; ArgIndex < argc - 2; ++ArgIndex)
     {
         WCHAR* Option = argv[ArgIndex];
+        WCHAR* EndPtr; // For wcstoul error checking
+
         if (Option[0] == L'/' || Option[0] == L'-')
         {
             // Check for numeric resync line option (e.g., /20)
             if (iswdigit(Option[1]))
             {
-                Config.ResyncLines = _wtoi(Option + 1);
+                unsigned long Value = wcstoul(Option + 1, &EndPtr, 10);
+                if (*EndPtr != L'\0' || Value == 0) // Must consume entire string and be non-zero
+                {
+                    wprintf(L"Invalid numeric option: %s\n", Option);
+                    return -1;
+                }
+                Config.ResyncLines = (UINT)Value;
             }
             // Check for buffer line option (e.g., /LB100)
             else if (wcsncmp(Option + 1, L"LB", 2) == 0 && iswdigit(Option[3]))
             {
-                Config.BufferLines = _wtoi(Option + 3);
+                unsigned long Value = wcstoul(Option + 3, &EndPtr, 10);
+                if (*EndPtr != L'\0' || Value == 0) // Must consume entire string and be non-zero
+                {
+                    wprintf(L"Invalid numeric option: %s\n", Option);
+                    return -1;
+                }
+                Config.BufferLines = (UINT)Value;
             }
             else
             {
                 switch (towupper(Option[1]))
                 {
-                    case L'B':
-                        Config.Mode = FC_MODE_BINARY;
-                        break;
-                    case L'C':
-                        Config.Flags |= FC_IGNORE_CASE;
-                        break;
-                    case L'W':
-                        Config.Flags |= FC_IGNORE_WS;
-                        break;
-                    case L'L':
-                        Config.Mode = FC_MODE_TEXT;
-                        break;
-                    case L'N':
-                        Config.Flags |= FC_SHOW_LINE_NUMS;
-                        break;
-                    case L'T':
-                        Config.Flags |= FC_RAW_TABS;
-                        break;
-                    case L'U':
-                        Config.Flags |= FC_UNICODE_TEXT;
-                        break;
-                    default:
-                        wprintf(L"Invalid option: %s\n", Option);
-                        return -1;
+                case L'B':
+                    Config.Mode = FC_MODE_BINARY;
+                    break;
+                case L'C':
+                    Config.Flags |= FC_IGNORE_CASE;
+                    break;
+                case L'W':
+                    Config.Flags |= FC_IGNORE_WS;
+                    break;
+                case L'L':
+                    Config.Mode = FC_MODE_TEXT;
+                    break;
+                case L'N':
+                    Config.Flags |= FC_SHOW_LINE_NUMS;
+                    break;
+                case L'T':
+                    Config.Flags |= FC_RAW_TABS;
+                    break;
+                case L'U':
+                    Config.Flags |= FC_UNICODE_TEXT;
+                    break;
+                default:
+                    wprintf(L"Invalid option: %s\n", Option);
+                    return -1;
                 }
             }
         }
@@ -141,18 +155,18 @@ wmain(
 
     switch (Result)
     {
-        case FC_OK:
-            // Files are identical
-            return 0;
-        case FC_DIFFERENT:
-            // Differences were found and printed by the callback
-            return 1;
-        case FC_ERROR_IO:
-        case FC_ERROR_MEMORY:
-            fprintf(stderr, "Error during comparison: %d\n", Result);
-            return 2;
-        default:
-            // Invalid parameter or other syntax error
-            return -1;
+    case FC_OK:
+        // Files are identical
+        return 0;
+    case FC_DIFFERENT:
+        // Differences were found and printed by the callback
+        return 1;
+    case FC_ERROR_IO:
+    case FC_ERROR_MEMORY:
+        fprintf(stderr, "Error during comparison: %d\n", Result);
+        return 2;
+    default:
+        // Invalid parameter or other syntax error
+        return -1;
     }
 }
