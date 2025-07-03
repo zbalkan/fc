@@ -128,13 +128,6 @@ extern "C" {
         size_t Capacity;
     } FC_LINE_ARRAY;
 
-    // Forward declaration for the main implementation function.
-    static FC_RESULT
-        _FileCheckCompareFilesImpl(
-            _In_z_ const WCHAR* Path1,
-            _In_z_ const WCHAR* Path2,
-            _In_ const FC_CONFIG* Config);
-
     static inline unsigned char
         _FileCheckToLowerAscii(
             unsigned char Character)
@@ -620,84 +613,6 @@ extern "C" {
         return Buffer;
     }
 
-    //
-    // Main Implementation
-    //
-
-    FC_RESULT
-        FileCheckCompareFilesUtf8(
-            _In_z_ const char* Path1Utf8,
-            _In_z_ const char* Path2Utf8,
-            _In_ const FC_CONFIG* Config)
-    {
-        if (Path1Utf8 == NULL || Path2Utf8 == NULL)
-        {
-            return FC_ERROR_INVALID_PARAM;
-        }
-
-        int WideLength1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, NULL, 0);
-        if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
-        WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
-        if (WidePath1 == NULL) return FC_ERROR_MEMORY;
-        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, WidePath1, WideLength1) == 0)
-        {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_INVALID_PARAM;
-        }
-
-        int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
-        if (WideLength2 == 0)
-        {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_INVALID_PARAM;
-        }
-        WCHAR* WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
-        if (WidePath2 == NULL)
-        {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_MEMORY;
-        }
-        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, WidePath2, WideLength2) == 0)
-        {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            HeapFree(GetProcessHeap(), 0, WidePath2);
-            return FC_ERROR_INVALID_PARAM;
-        }
-
-        FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
-
-        HeapFree(GetProcessHeap(), 0, WidePath1);
-        HeapFree(GetProcessHeap(), 0, WidePath2);
-        return Result;
-    }
-
-    FC_RESULT
-        FileCheckCompareFilesW(
-            _In_z_ const WCHAR* Path1,
-            _In_z_ const WCHAR* Path2,
-            _In_ const FC_CONFIG* Config)
-    {
-        if (Path1 == NULL || Path2 == NULL || Config == NULL)
-        {
-            return FC_ERROR_INVALID_PARAM;
-        }
-
-        WCHAR* LongPath1 = _FileCheckCreateLongPathW(Path1);
-        WCHAR* LongPath2 = _FileCheckCreateLongPathW(Path2);
-        if (LongPath1 == NULL || LongPath2 == NULL)
-        {
-            if (LongPath1 != NULL) HeapFree(GetProcessHeap(), 0, LongPath1);
-            if (LongPath2 != NULL) HeapFree(GetProcessHeap(), 0, LongPath2);
-            return FC_ERROR_MEMORY;
-        }
-
-        FC_RESULT Result = _FileCheckCompareFilesImpl(LongPath1, LongPath2, Config);
-
-        HeapFree(GetProcessHeap(), 0, LongPath1);
-        HeapFree(GetProcessHeap(), 0, LongPath2);
-        return Result;
-    }
-
     static FC_RESULT
         _FileCheckCompareFilesImpl(
             _In_z_ const WCHAR* Path1,
@@ -839,6 +754,84 @@ extern "C" {
             _FileCheckLineArrayFree(&ArrayB);
             return Result;
         }
+    }
+
+    //
+    // Main Implementation
+    //
+
+    FC_RESULT
+        FileCheckCompareFilesUtf8(
+            _In_z_ const char* Path1Utf8,
+            _In_z_ const char* Path2Utf8,
+            _In_ const FC_CONFIG* Config)
+    {
+        if (Path1Utf8 == NULL || Path2Utf8 == NULL)
+        {
+            return FC_ERROR_INVALID_PARAM;
+        }
+
+        int WideLength1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, NULL, 0);
+        if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
+        WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
+        if (WidePath1 == NULL) return FC_ERROR_MEMORY;
+        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, WidePath1, WideLength1) == 0)
+        {
+            HeapFree(GetProcessHeap(), 0, WidePath1);
+            return FC_ERROR_INVALID_PARAM;
+        }
+
+        int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
+        if (WideLength2 == 0)
+        {
+            HeapFree(GetProcessHeap(), 0, WidePath1);
+            return FC_ERROR_INVALID_PARAM;
+        }
+        WCHAR* WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
+        if (WidePath2 == NULL)
+        {
+            HeapFree(GetProcessHeap(), 0, WidePath1);
+            return FC_ERROR_MEMORY;
+        }
+        if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, WidePath2, WideLength2) == 0)
+        {
+            HeapFree(GetProcessHeap(), 0, WidePath1);
+            HeapFree(GetProcessHeap(), 0, WidePath2);
+            return FC_ERROR_INVALID_PARAM;
+        }
+
+        FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
+
+        HeapFree(GetProcessHeap(), 0, WidePath1);
+        HeapFree(GetProcessHeap(), 0, WidePath2);
+        return Result;
+    }
+
+    FC_RESULT
+        FileCheckCompareFilesW(
+            _In_z_ const WCHAR* Path1,
+            _In_z_ const WCHAR* Path2,
+            _In_ const FC_CONFIG* Config)
+    {
+        if (Path1 == NULL || Path2 == NULL || Config == NULL)
+        {
+            return FC_ERROR_INVALID_PARAM;
+        }
+
+        WCHAR* LongPath1 = _FileCheckCreateLongPathW(Path1);
+        WCHAR* LongPath2 = _FileCheckCreateLongPathW(Path2);
+        if (LongPath1 == NULL || LongPath2 == NULL)
+        {
+            if (LongPath1 != NULL) HeapFree(GetProcessHeap(), 0, LongPath1);
+            if (LongPath2 != NULL) HeapFree(GetProcessHeap(), 0, LongPath2);
+            return FC_ERROR_MEMORY;
+        }
+
+        FC_RESULT Result = _FileCheckCompareFilesImpl(LongPath1, LongPath2, Config);
+
+        HeapFree(GetProcessHeap(), 0, LongPath1);
+        HeapFree(GetProcessHeap(), 0, LongPath2);
+        return Result;
     }
 
 #ifdef __cplusplus
