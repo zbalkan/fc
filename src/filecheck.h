@@ -766,44 +766,56 @@ extern "C" {
             _In_z_ const char* Path2Utf8,
             _In_ const FC_CONFIG* Config)
     {
+        WCHAR* WidePath1 = NULL;
+        WCHAR* WidePath2 = NULL;
+        FC_RESULT Result = FC_OK;
+
         if (Path1Utf8 == NULL || Path2Utf8 == NULL)
         {
             return FC_ERROR_INVALID_PARAM;
         }
 
         int WideLength1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, NULL, 0);
-        if (WideLength1 == 0) return FC_ERROR_INVALID_PARAM;
-        WCHAR* WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
-        if (WidePath1 == NULL) return FC_ERROR_MEMORY;
+        if (WideLength1 == 0)
+        {
+            Result = FC_ERROR_INVALID_PARAM;
+            goto cleanup;
+        }
+        WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
+        if (WidePath1 == NULL)
+        {
+            Result = FC_ERROR_MEMORY;
+            goto cleanup;
+        }
         if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, WidePath1, WideLength1) == 0)
         {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_INVALID_PARAM;
+            Result = FC_ERROR_INVALID_PARAM;
+            goto cleanup;
         }
 
         int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
         if (WideLength2 == 0)
         {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_INVALID_PARAM;
+            Result = FC_ERROR_INVALID_PARAM;
+            goto cleanup;
         }
-        WCHAR* WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
+        WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
         if (WidePath2 == NULL)
         {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            return FC_ERROR_MEMORY;
+            Result = FC_ERROR_MEMORY;
+            goto cleanup;
         }
         if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, WidePath2, WideLength2) == 0)
         {
-            HeapFree(GetProcessHeap(), 0, WidePath1);
-            HeapFree(GetProcessHeap(), 0, WidePath2);
-            return FC_ERROR_INVALID_PARAM;
+            Result = FC_ERROR_INVALID_PARAM;
+            goto cleanup;
         }
 
-        FC_RESULT Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
+        Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
 
-        HeapFree(GetProcessHeap(), 0, WidePath1);
-        HeapFree(GetProcessHeap(), 0, WidePath2);
+    cleanup:
+        if (WidePath1 != NULL) HeapFree(GetProcessHeap(), 0, WidePath1);
+        if (WidePath2 != NULL) HeapFree(GetProcessHeap(), 0, WidePath2);
         return Result;
     }
 
