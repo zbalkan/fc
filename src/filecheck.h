@@ -395,14 +395,13 @@ extern "C" {
             _Out_ size_t* NewLength)
     {
         *NewLength = 0;
-
-#define TAB_WIDTH 8
+        const int TabWidth = 4;
         size_t ExpandedLength = 0;
         for (size_t i = 0; i < SourceLength; ++i)
         {
             if (Source[i] == '\t')
             {
-                ExpandedLength += TAB_WIDTH - (ExpandedLength % TAB_WIDTH);
+                ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
             }
             else
             {
@@ -425,7 +424,7 @@ extern "C" {
         {
             if (Source[i] == '\t')
             {
-                size_t SpacesToAdd = TAB_WIDTH - (DestIndex % TAB_WIDTH);
+                size_t SpacesToAdd = TabWidth - (DestIndex % TabWidth);
                 for (size_t s = 0; s < SpacesToAdd; ++s)
                 {
                     Dest[DestIndex++] = ' ';
