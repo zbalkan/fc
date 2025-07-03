@@ -1,6 +1,10 @@
 # FileCheck for Windows
 
-**A modern, header-only file comparison library for Windows and a feature-compatible `fc.exe` command-line replacement.**
+**This is a proof of concept tool and not production-ready.**
+
+---
+
+A modern, header-only file comparison library for Windows and a feature-compatible `fc.exe` command-line replacement.
 
 This project provides two main components:
 
