@@ -399,11 +399,15 @@ extern "C" {
 	{
 		*NewLength = 0;
 		const int TabWidth = 4;
+
+		BOOL HasTabs = FALSE;
 		size_t ExpandedLength = 0;
+
 		for (size_t i = 0; i < SourceLength; ++i)
 		{
 			if (Source[i] == '\t')
 			{
+				HasTabs = TRUE;
 				ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
 			}
 			else
@@ -412,15 +416,15 @@ extern "C" {
 			}
 		}
 
-		if (ExpandedLength == SourceLength)
+		if (!HasTabs)
 		{
-			// No tabs found, just duplicate the original string
 			*NewLength = SourceLength;
-			return _FileCheckStringDuplicateRange(Source, SourceLength);
+			return (char*)Source; // Return input directly – caller must not free it
 		}
 
 		char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
-		if (Dest == NULL) return NULL;
+		if (Dest == NULL)
+			return NULL;
 
 		size_t DestIndex = 0;
 		for (size_t i = 0; i < SourceLength; ++i)
@@ -440,7 +444,6 @@ extern "C" {
 		}
 		Dest[DestIndex] = '\0';
 		*NewLength = DestIndex;
-
 		return Dest;
 	}
 
@@ -477,13 +480,16 @@ extern "C" {
 			// Expand tabs if FC_RAW_TABS is not set
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
-				FinalText = _FileCheckExpandTabs(LineText, OriginalLength, &FinalLength);
-				HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
-				if (FinalText == NULL)
+				char* Expanded = _FileCheckExpandTabs(LineText, OriginalLength, &FinalLength);
+
+				if (Expanded == NULL)
 				{
 					_FileCheckLineArrayFree(LineArray);
 					return FC_ERROR_MEMORY;
 				}
+
+				if (Expanded != LineText)
+					HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
 			}
 
 			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Config);
