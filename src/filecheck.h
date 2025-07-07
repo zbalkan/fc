@@ -208,11 +208,11 @@ extern "C" {
 	static inline void
 		_FileCheckIntegerToHex(
 			size_t Value,
-			_Out_writes_z_(17) char* OutputBuffer) // SAL: Buffer must hold at least 17 chars.
+			_Out_writes_z_(17) char* OutputBuffer)
 	{
-		const char* HexDigits = "0123456789abcdef";
-		char TempBuffer[16] = { 0 }; // Initialize TempBuffer to avoid uninitialized local variable warning.
-		int Index = 0;
+		static const char HexDigits[] = "0123456789abcdef";
+		char Temp[16];
+		int i = 0;
 
 		if (Value == 0)
 		{
@@ -221,18 +221,16 @@ extern "C" {
 			return;
 		}
 
-		do
+		while (Value && i < 16)
 		{
-			TempBuffer[Index++] = HexDigits[Value % 16];
-			Value /= 16;
-		} while (Value > 0);
-
-		int OutputIndex = 0;
-		while (Index > 0)
-		{
-			OutputBuffer[OutputIndex++] = TempBuffer[--Index];
+			Temp[i++] = HexDigits[Value & 0xF];
+			Value >>= 4;
 		}
-		OutputBuffer[OutputIndex] = '\0';
+
+		for (int j = 0; j < i; ++j)
+			OutputBuffer[j] = Temp[i - j - 1];
+
+		OutputBuffer[i] = '\0';
 	}
 
 	static inline WCHAR*
