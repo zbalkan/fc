@@ -535,24 +535,25 @@ extern "C" {
 	}
 
 	static inline char*
-		_FileCheckReadFileContentsUnicode(
+		_FileCheckReadFileContents(
 			_In_z_ const WCHAR* Path,
 			_Out_ size_t* OutputLength,
 			_Out_ FC_RESULT* Result)
 	{
 		*OutputLength = 0;
 		*Result = FC_ERROR_IO;
-		HANDLE FileHandle = CreateFileW(Path,
+
+		HANDLE FileHandle = CreateFileW(
+			Path,
 			GENERIC_READ,
 			FILE_SHARE_READ,
 			NULL,
 			OPEN_EXISTING,
 			FILE_ATTRIBUTE_NORMAL,
 			NULL);
+
 		if (FileHandle == INVALID_HANDLE_VALUE)
-		{
 			return NULL;
-		}
 
 		LARGE_INTEGER FileSize;
 		if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1)
@@ -562,13 +563,10 @@ extern "C" {
 		}
 
 		size_t Length = (size_t)FileSize.QuadPart;
-		// Handle empty file case explicitly for clarity
 		if (Length == 0)
 		{
 			CloseHandle(FileHandle);
 			*Result = FC_OK;
-			*OutputLength = 0;
-			// Return a valid, allocated pointer for an empty string
 			return _FileCheckStringDuplicateRange("", 0);
 		}
 
@@ -583,60 +581,6 @@ extern "C" {
 		DWORD BytesRead = 0;
 		if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length)
 		{
-			HeapFree(GetProcessHeap(), 0, Buffer);
-			CloseHandle(FileHandle);
-			*Result = FC_ERROR_IO;
-			return NULL;
-		}
-
-		CloseHandle(FileHandle);
-		*OutputLength = Length;
-		*Result = FC_OK;
-		return Buffer;
-	}
-
-	static char*
-		_FileCheckReadFileContentsAscii(
-			_In_z_ const WCHAR* Path,
-			_Out_ size_t* OutputLength,
-			_Out_ FC_RESULT* Result)
-	{
-		*OutputLength = 0;
-		*Result = FC_ERROR_IO;
-
-		HANDLE FileHandle = CreateFileW(Path,
-			GENERIC_READ,
-			FILE_SHARE_READ,
-			NULL,
-			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
-			NULL);
-		if (FileHandle == INVALID_HANDLE_VALUE) {
-			return NULL;
-		}
-
-		LARGE_INTEGER FileSize;
-		if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1) {
-			CloseHandle(FileHandle);
-			return NULL;
-		}
-
-		size_t Length = (size_t)FileSize.QuadPart;
-		if (Length == 0) {
-			CloseHandle(FileHandle);
-			*Result = FC_OK;
-			return _FileCheckStringDuplicateRange("", 0);
-		}
-
-		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length);
-		if (Buffer == NULL) {
-			CloseHandle(FileHandle);
-			*Result = FC_ERROR_MEMORY;
-			return NULL;
-		}
-
-		DWORD BytesRead = 0;
-		if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length) {
 			HeapFree(GetProcessHeap(), 0, Buffer);
 			CloseHandle(FileHandle);
 			*Result = FC_ERROR_IO;
@@ -701,13 +645,13 @@ extern "C" {
 		size_t Length1, Length2;
 		FC_RESULT Result1, Result2;
 
-		char* Buffer1 = _FileCheckReadFileContentsUnicode(Path1, &Length1, &Result1);
+		char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
 		if (Buffer1 == NULL)
 		{
 			return Result1;
 		}
 
-		char* Buffer2 = _FileCheckReadFileContentsUnicode(Path2, &Length2, &Result2);
+		char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
 		if (Buffer2 == NULL)
 		{
 			HeapFree(GetProcessHeap(), 0, Buffer1);
@@ -746,13 +690,13 @@ extern "C" {
 		size_t Length1, Length2;
 		FC_RESULT Result1, Result2;
 
-		char* Buffer1 = _FileCheckReadFileContentsAscii(Path1, &Length1, &Result1);
+		char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
 		if (Buffer1 == NULL)
 		{
 			return Result1;
 		}
 
-		char* Buffer2 = _FileCheckReadFileContentsAscii(Path2, &Length2, &Result2);
+		char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
 		if (Buffer2 == NULL)
 		{
 			HeapFree(GetProcessHeap(), 0, Buffer1);
