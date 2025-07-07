@@ -76,6 +76,23 @@ ParseNumericOption(
 	return TRUE;
 }
 
+typedef struct {
+	WCHAR OptionChar;    // Uppercase single-char option (e.g., 'B', 'C', etc.)
+	UINT FlagToSet;      // Config.Flags to OR
+	FC_MODE ModeToSet;   // If not 0, sets Config.Mode
+} OPTION_MAP;
+
+static const OPTION_MAP g_OptionMap[] = {
+	{ L'B', 0, FC_MODE_BINARY },
+	{ L'C', FC_IGNORE_CASE, 0 },
+	{ L'W', FC_IGNORE_WS, 0 },
+	{ L'L', 0, FC_MODE_TEXT_ASCII },
+	{ L'N', FC_SHOW_LINE_NUMS, 0 },
+	{ L'T', FC_RAW_TABS, 0 },
+	{ L'U', 0, FC_MODE_TEXT_UNICODE },
+	{ 0, 0, 0 } // Sentinel
+};
+
 //
 // Main entry point for the application.
 // Using wmain to natively support Unicode command-line arguments.
@@ -122,33 +139,28 @@ wmain(
 			}
 			else
 			{
-				switch (towupper(Option[1]))
+				WCHAR OptionChar = towupper(Option[1]);
+				BOOL Handled = FALSE;
+
+				for (int i = 0; g_OptionMap[i].OptionChar != 0; ++i)
 				{
-				case L'B':
-					Config.Mode = FC_MODE_BINARY;
-					break;
-				case L'C':
-					Config.Flags |= FC_IGNORE_CASE;
-					break;
-				case L'W':
-					Config.Flags |= FC_IGNORE_WS;
-					break;
-				case L'L':
-					Config.Mode = FC_MODE_TEXT_ASCII;
-					break;
-				case L'N':
-					Config.Flags |= FC_SHOW_LINE_NUMS;
-					break;
-				case L'T':
-					Config.Flags |= FC_RAW_TABS;
-					break;
-				case L'U':
-					Config.Mode = FC_MODE_TEXT_UNICODE;
-					break;
-				default:
+					if (OptionChar == g_OptionMap[i].OptionChar)
+					{
+						if (g_OptionMap[i].FlagToSet)
+							Config.Flags |= g_OptionMap[i].FlagToSet;
+						if (g_OptionMap[i].ModeToSet)
+							Config.Mode = g_OptionMap[i].ModeToSet;
+						Handled = TRUE;
+						break;
+					}
+				}
+
+				if (!Handled)
+				{
 					wprintf(L"Invalid option: %s\n", Option);
 					return -1;
 				}
+
 			}
 		}
 		else
