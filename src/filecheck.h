@@ -296,46 +296,66 @@ extern "C" {
 	}
 
 	static inline UINT
+		_FileCheckComputeHash(
+			_In_reads_(Length) const char* String,
+			_In_ size_t Length,
+			_In_ UINT Flags)
+	{
+		UINT Hash = 0;
+		for (size_t i = 0; i < Length; ++i)
+		{
+			unsigned char Character = (unsigned char)String[i];
+			if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+				continue;
+			Hash = Hash * 31 + Character;
+		}
+		return Hash;
+	}
+
+	static inline UINT
 		_FileCheckHashLine(
 			_In_reads_(Length) const char* String,
 			_In_ size_t Length,
 			_In_ const FC_CONFIG* Config)
 	{
-		UINT Hash = 0;
 		UINT Flags = Config->Flags;
 
-		if (!(Flags & FC_IGNORE_CASE)) {
-			for (size_t i = 0; i < Length; ++i) {
-				unsigned char Character = (unsigned char)String[i];
-				if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-					continue;
-				Hash = Hash * 31 + Character;
-			}
+		// If case-insensitive and Unicode, lowercase using Unicode-aware conversion
+		if ((Flags & FC_IGNORE_CASE) && Config->Mode == FC_MODE_TEXT_UNICODE)
+		{
+			size_t LowerLength;
+			char* LowerString = _FileCheckStringToLowerUnicode(String, Length, &LowerLength);
+			if (LowerString == NULL)
+				return 0; // Fail-safe; hashing 0 for NULL is safe for comparison fallback
+			UINT Hash = _FileCheckComputeHash(LowerString, LowerLength, Flags);
+			HeapFree(GetProcessHeap(), 0, LowerString);
 			return Hash;
 		}
 
-		if (Config->Mode == FC_MODE_TEXT_UNICODE) {
-			size_t LowerLength;
-			char* LowerString = _FileCheckStringToLowerUnicode(String, Length, &LowerLength);
-			if (LowerString != NULL) {
-				for (size_t i = 0; i < LowerLength; ++i) {
-					unsigned char Character = (unsigned char)LowerString[i];
-					if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-						continue;
-					Hash = Hash * 31 + Character;
-				}
-				HeapFree(GetProcessHeap(), 0, LowerString);
+		// Otherwise, optionally ASCII-lower the input before hashing
+		char* Temp = NULL;
+		const char* Input = String;
+		size_t InputLen = Length;
+
+		if (Flags & FC_IGNORE_CASE)
+		{
+			Temp = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+			if (Temp == NULL)
+				return 0;
+
+			for (size_t i = 0; i < Length; ++i)
+			{
+				Temp[i] = (char)_FileCheckToLowerAscii((unsigned char)String[i]);
 			}
+			Temp[Length] = '\0';
+			Input = Temp;
 		}
-		else {
-			for (size_t i = 0; i < Length; ++i) {
-				unsigned char Character = (unsigned char)String[i];
-				if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-					continue;
-				Character = _FileCheckToLowerAscii(Character);
-				Hash = Hash * 31 + Character;
-			}
-		}
+
+		UINT Hash = _FileCheckComputeHash(Input, InputLen, Flags);
+
+		if (Temp)
+			HeapFree(GetProcessHeap(), 0, Temp);
+
 		return Hash;
 	}
 
