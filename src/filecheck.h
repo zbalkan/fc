@@ -32,9 +32,10 @@ extern "C" {
 	//
 	typedef enum
 	{
-		FC_MODE_TEXT,
-		FC_MODE_BINARY,
-		FC_MODE_AUTO // Auto-detect based on file content
+		FC_MODE_TEXT_ASCII,     // Plain text, ASCII/ANSI encoding
+		FC_MODE_TEXT_UNICODE,   // Unicode text (UTF-8, UTF-16 w/ BOM)
+		FC_MODE_BINARY,         // Raw binary comparison
+		FC_MODE_AUTO            // Auto-detect based on file content
 	} FC_MODE;
 
 	//
@@ -44,7 +45,6 @@ extern "C" {
 #define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
 #define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
 #define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
-#define FC_UNICODE_TEXT     0x0010  // Use Unicode-aware case-insensitivity.
 
 /**
  * @brief Callback function for reporting comparison differences.
@@ -95,7 +95,7 @@ extern "C" {
 	/**
 	 * @brief Compares two files using UTF-8 encoded paths.
 	 *
-     * This is a convenience wrapper that converts paths to UTF-16 before comparison.
+	 * This is a convenience wrapper that converts paths to UTF-16 before comparison.
 	 *
 	 * @param Path1Utf8 Path to the first file, UTF-8 encoded.
 	 * @param Path2Utf8 Path to the second file, UTF-8 encoded.
@@ -299,55 +299,39 @@ extern "C" {
 		_FileCheckHashLine(
 			_In_reads_(Length) const char* String,
 			_In_ size_t Length,
-			_In_ UINT Flags)
+			_In_ const FC_CONFIG* Config)
 	{
 		UINT Hash = 0;
+		UINT Flags = Config->Flags;
 
-		// Fast path for default case-sensitive comparison
-		if (!(Flags & FC_IGNORE_CASE))
-		{
-			for (size_t i = 0; i < Length; ++i)
-			{
+		if (!(Flags & FC_IGNORE_CASE)) {
+			for (size_t i = 0; i < Length; ++i) {
 				unsigned char Character = (unsigned char)String[i];
 				if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-				{
 					continue;
-				}
 				Hash = Hash * 31 + Character;
 			}
 			return Hash;
 		}
 
-		// Case-insensitive comparison paths
-		if (Flags & FC_UNICODE_TEXT)
-		{
-			// Correct, but slower, Unicode-aware path
+		if (Config->Mode == FC_MODE_TEXT_UNICODE) {
 			size_t LowerLength;
 			char* LowerString = _FileCheckStringToLowerUnicode(String, Length, &LowerLength);
-			if (LowerString != NULL)
-			{
-				for (size_t i = 0; i < LowerLength; ++i)
-				{
+			if (LowerString != NULL) {
+				for (size_t i = 0; i < LowerLength; ++i) {
 					unsigned char Character = (unsigned char)LowerString[i];
 					if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-					{
 						continue;
-					}
 					Hash = Hash * 31 + Character;
 				}
 				HeapFree(GetProcessHeap(), 0, LowerString);
 			}
 		}
-		else
-		{
-			// Fast, but ASCII-only, path
-			for (size_t i = 0; i < Length; ++i)
-			{
+		else {
+			for (size_t i = 0; i < Length; ++i) {
 				unsigned char Character = (unsigned char)String[i];
 				if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
-				{
 					continue;
-				}
 				Character = _FileCheckToLowerAscii(Character);
 				Hash = Hash * 31 + Character;
 			}
@@ -445,7 +429,7 @@ extern "C" {
 			_In_reads_(BufferLength) const char* Buffer,
 			_In_ size_t BufferLength,
 			_Inout_ FC_LINE_ARRAY* LineArray,
-			_In_ UINT Flags)
+			_In_ const FC_CONFIG* Config)
 	{
 		_FileCheckLineArrayInit(LineArray);
 		const char* Ptr = Buffer;
@@ -471,7 +455,7 @@ extern "C" {
 			char* FinalText = LineText;
 
 			// Expand tabs if FC_RAW_TABS is not set
-			if (!(Flags & FC_RAW_TABS))
+			if (!(Config->Flags & FC_RAW_TABS))
 			{
 				FinalText = _FileCheckExpandTabs(LineText, OriginalLength, &FinalLength);
 				HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
@@ -482,7 +466,7 @@ extern "C" {
 				}
 			}
 
-			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Flags);
+			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Config);
 			if (!_FileCheckLineArrayAppend(LineArray, FinalText, FinalLength, Hash))
 			{
 				HeapFree(GetProcessHeap(), 0, FinalText);
@@ -551,7 +535,7 @@ extern "C" {
 	}
 
 	static inline char*
-		_FileCheckReadFileContents(
+		_FileCheckReadFileContentsUnicode(
 			_In_z_ const WCHAR* Path,
 			_Out_ size_t* OutputLength,
 			_Out_ FC_RESULT* Result)
@@ -611,6 +595,60 @@ extern "C" {
 		return Buffer;
 	}
 
+	static char*
+		_FileCheckReadFileContentsAscii(
+			_In_z_ const WCHAR* Path,
+			_Out_ size_t* OutputLength,
+			_Out_ FC_RESULT* Result)
+	{
+		*OutputLength = 0;
+		*Result = FC_ERROR_IO;
+
+		HANDLE FileHandle = CreateFileW(Path,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			NULL,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL,
+			NULL);
+		if (FileHandle == INVALID_HANDLE_VALUE) {
+			return NULL;
+		}
+
+		LARGE_INTEGER FileSize;
+		if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1) {
+			CloseHandle(FileHandle);
+			return NULL;
+		}
+
+		size_t Length = (size_t)FileSize.QuadPart;
+		if (Length == 0) {
+			CloseHandle(FileHandle);
+			*Result = FC_OK;
+			return _FileCheckStringDuplicateRange("", 0);
+		}
+
+		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length);
+		if (Buffer == NULL) {
+			CloseHandle(FileHandle);
+			*Result = FC_ERROR_MEMORY;
+			return NULL;
+		}
+
+		DWORD BytesRead = 0;
+		if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length) {
+			HeapFree(GetProcessHeap(), 0, Buffer);
+			CloseHandle(FileHandle);
+			*Result = FC_ERROR_IO;
+			return NULL;
+		}
+
+		CloseHandle(FileHandle);
+		*OutputLength = Length;
+		*Result = FC_OK;
+		return Buffer;
+	}
+
 	static inline BOOL
 		IsProbablyTextBuffer(const BYTE* buffer, DWORD length) {
 		const double textThreshold = 0.90;
@@ -632,7 +670,6 @@ extern "C" {
 
 	static inline BOOL
 		IsProbablyTextFileW(const WCHAR* filepath) {
-
 		HANDLE hFile = CreateFileW(
 			filepath,
 			GENERIC_READ,
@@ -656,7 +693,7 @@ extern "C" {
 	}
 
 	static FC_RESULT
-		_FileCheckCompareFilesTextW(
+		_FileCheckCompareFilesTextUnicode(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -664,13 +701,13 @@ extern "C" {
 		size_t Length1, Length2;
 		FC_RESULT Result1, Result2;
 
-		char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
+		char* Buffer1 = _FileCheckReadFileContentsUnicode(Path1, &Length1, &Result1);
 		if (Buffer1 == NULL)
 		{
 			return Result1;
 		}
 
-		char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
+		char* Buffer2 = _FileCheckReadFileContentsUnicode(Path2, &Length2, &Result2);
 		if (Buffer2 == NULL)
 		{
 			HeapFree(GetProcessHeap(), 0, Buffer1);
@@ -678,7 +715,7 @@ extern "C" {
 		}
 
 		FC_LINE_ARRAY ArrayA, ArrayB;
-		Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config->Flags);
+		Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
 		HeapFree(GetProcessHeap(), 0, Buffer1);
 		if (Result1 != FC_OK)
 		{
@@ -686,7 +723,7 @@ extern "C" {
 			return FC_ERROR_MEMORY;
 		}
 
-		Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config->Flags);
+		Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
 		HeapFree(GetProcessHeap(), 0, Buffer2);
 		if (Result2 != FC_OK)
 		{
@@ -701,7 +738,52 @@ extern "C" {
 	}
 
 	static FC_RESULT
-		_FileCheckCompareFilesBinaryW(
+		_FileCheckCompareFilesTextAscii(
+			_In_z_ const WCHAR* Path1,
+			_In_z_ const WCHAR* Path2,
+			_In_ const FC_CONFIG* Config)
+	{
+		size_t Length1, Length2;
+		FC_RESULT Result1, Result2;
+
+		char* Buffer1 = _FileCheckReadFileContentsAscii(Path1, &Length1, &Result1);
+		if (Buffer1 == NULL)
+		{
+			return Result1;
+		}
+
+		char* Buffer2 = _FileCheckReadFileContentsAscii(Path2, &Length2, &Result2);
+		if (Buffer2 == NULL)
+		{
+			HeapFree(GetProcessHeap(), 0, Buffer1);
+			return Result2;
+		}
+
+		FC_LINE_ARRAY ArrayA, ArrayB;
+		Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
+		HeapFree(GetProcessHeap(), 0, Buffer1);
+		if (Result1 != FC_OK)
+		{
+			HeapFree(GetProcessHeap(), 0, Buffer2);
+			return FC_ERROR_MEMORY;
+		}
+
+		Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
+		HeapFree(GetProcessHeap(), 0, Buffer2);
+		if (Result2 != FC_OK)
+		{
+			_FileCheckLineArrayFree(&ArrayA);
+			return FC_ERROR_MEMORY;
+		}
+
+		FC_RESULT Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+		_FileCheckLineArrayFree(&ArrayA);
+		_FileCheckLineArrayFree(&ArrayB);
+		return Result;
+	}
+
+	static FC_RESULT
+		_FileCheckCompareFilesBinary(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -885,21 +967,27 @@ extern "C" {
 
 		FC_RESULT Result;
 
-		if (Config->Mode == FC_MODE_AUTO) {
+		switch (Config->Mode)
+		{
+		case FC_MODE_TEXT_ASCII:
+			Result = _FileCheckCompareFilesTextAscii(LongPath1, LongPath2, Config);
+			break;
+		case FC_MODE_TEXT_UNICODE:
+			Result = _FileCheckCompareFilesTextUnicode(LongPath1, LongPath2, Config);
+			break;
+		case FC_MODE_BINARY:
+			Result = _FileCheckCompareFilesBinary(LongPath1, LongPath2, Config);
+			break;
+		case FC_MODE_AUTO:
+		default: {
 			BOOL isText1 = IsProbablyTextFileW(Path1);
 			BOOL isText2 = IsProbablyTextFileW(Path2);
-			if (isText1 && isText2) {
-				Result = _FileCheckCompareFilesTextW(LongPath1, LongPath2, Config);
-			}
-			else {
-				Result = _FileCheckCompareFilesBinaryW(LongPath1, LongPath2, Config);
-			}
+			if (isText1 && isText2)
+				Result = _FileCheckCompareFilesTextUnicode(LongPath1, LongPath2, Config);
+			else
+				Result = _FileCheckCompareFilesBinary(LongPath1, LongPath2, Config);
+			break;
 		}
-		else if (Config->Mode == FC_MODE_TEXT) {
-			Result = _FileCheckCompareFilesTextW(LongPath1, LongPath2, Config);
-		}
-		else {
-			Result = _FileCheckCompareFilesBinaryW(LongPath1, LongPath2, Config);
 		}
 
 		HeapFree(GetProcessHeap(), 0, LongPath1);
