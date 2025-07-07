@@ -55,6 +55,27 @@ PrintUsage(void)
 	printf("(If neither L, B or U is specified, auto-detect is used)\n");
 }
 
+static BOOL
+ParseNumericOption(
+	_In_z_ const WCHAR* OptionString,
+	_Out_ UINT* Value,
+	_In_ UINT MinValue,
+	_In_ UINT MaxValue)
+{
+	WCHAR* EndPtr;
+	errno = 0;
+	unsigned long ParsedValue = wcstoul(OptionString, &EndPtr, 10);
+
+	if (*EndPtr != L'\0' || ParsedValue < MinValue || ParsedValue > MaxValue || errno == ERANGE)
+	{
+		wprintf(L"Invalid numeric option: %s\n", OptionString);
+		return FALSE;
+	}
+
+	*Value = (UINT)ParsedValue;
+	return TRUE;
+}
+
 //
 // Main entry point for the application.
 // Using wmain to natively support Unicode command-line arguments.
@@ -84,33 +105,20 @@ wmain(
 	for (; ArgIndex < argc - 2; ++ArgIndex)
 	{
 		WCHAR* Option = argv[ArgIndex];
-		WCHAR* EndPtr; // For wcstoul error checking
 
 		if (Option[0] == L'/' || Option[0] == L'-')
 		{
 			// Check for numeric resync line option (e.g., /20)
 			if (iswdigit(Option[1]))
 			{
-				errno = 0; // Clear errno before call
-				unsigned long Value = wcstoul(Option + 1, &EndPtr, 10);
-				if (*EndPtr != L'\0' || Value == 0 || errno == ERANGE) // Must consume entire string, be non-zero, and not overflow/underflow
-				{
-					wprintf(L"Invalid numeric option: %s\n", Option);
+				if (!ParseNumericOption(Option + 1, &Config.ResyncLines, 1, UINT_MAX))
 					return -1;
-				}
-				Config.ResyncLines = (UINT)Value;
 			}
 			// Check for buffer line option (e.g., /LB100)
 			else if (wcsncmp(Option + 1, L"LB", 2) == 0 && iswdigit(Option[3]))
 			{
-				errno = 0; // Clear errno before call
-				unsigned long Value = wcstoul(Option + 3, &EndPtr, 10);
-				if (*EndPtr != L'\0' || Value == 0 || errno == ERANGE) // Must consume entire string, be non-zero, and not overflow/underflow
-				{
-					wprintf(L"Invalid numeric option: %s\n", Option);
+				if (!ParseNumericOption(Option + 3, &Config.BufferLines, 1, UINT_MAX))
 					return -1;
-				}
-				Config.BufferLines = (UINT)Value;
 			}
 			else
 			{
