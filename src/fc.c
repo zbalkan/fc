@@ -1,8 +1,8 @@
 /*
- * PROJECT:     FileCheck CLI Application
+ * PROJECT:     filecheck CLI Application
  * LICENSE:     GPL2
  * PURPOSE:     Provides a feature-compatible command-line interface to fc.exe
- *              using the FileCheck.h library.
+ *              using the filecheck.h library.
  * COPYRIGHT:   Copyright 2025 Zafer Balkan
  */
 
@@ -52,6 +52,7 @@ PrintUsage(void)
     printf("  /U    Unicode text comparison\n");
     printf("  /nnnn Set resync line threshold (default 2)\n");
     printf("  /LBn  Set internal buffer size for text lines (default 100)\n");
+    printf("(If neither L, B or U is specified, auto-detect is used)\n");
 }
 
 //
@@ -72,7 +73,7 @@ wmain(
     FC_CONFIG Config = { 0 }; // Initialize all fields to zero
 
     // Set defaults
-    Config.Mode = FC_MODE_TEXT;
+    Config.Mode = FC_MODE_AUTO;
     Config.Flags = 0;
     Config.ResyncLines = 2;
     Config.BufferLines = 100;
