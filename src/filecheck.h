@@ -14,6 +14,7 @@ extern "C" {
 #include <windows.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <winternl.h>
 
 	//
 	// Return codes for comparison operations.
@@ -41,19 +42,83 @@ extern "C" {
 	//
 	// Flags to modify comparison behavior.
 	//
-#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
-#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
-#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
-#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+	#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
+	#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
+	#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
+	#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
 
-/**
- * @brief Callback function for reporting comparison differences.
- *
- * @param UserData  User-defined data passed from the FC_CONFIG struct.
- * @param Message   A UTF-8 encoded string describing the difference.
- * @param Line1     The line number in the first file, or -1 if not applicable.
- * @param Line2     The line number in the second file, or -1 if not applicable.
- */
+	/**
+	 * @enum RTL_PATH_TYPE
+	 * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
+	 *
+	 * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
+	 * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
+	 * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
+	 *
+	 * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
+	 */
+	typedef enum _RTL_PATH_TYPE {
+		/**
+		 * The path type could not be determined. Typically indicates malformed or empty input.
+		 */
+		RtlPathTypeUnknown = 0,
+
+		/**
+		 * A Universal Naming Convention (UNC) path, starting with two backslashes (\\server\share).
+		 */
+		RtlPathTypeUncAbsolute,
+
+		/**
+		 * A drive letter-based absolute path (e.g., C:\path\to\file).
+		 */
+		RtlPathTypeDriveAbsolute,
+
+		/**
+		 * A drive-relative path (e.g., C:folder\file.txt) — resolved against the current directory for the given drive.
+		 */
+		RtlPathTypeDriveRelative,
+
+		/**
+		 * A rooted path (e.g., \folder\file.txt) — interpreted relative to the current drive's root.
+		 */
+		RtlPathTypeRooted,
+
+		/**
+		 * A relative path (e.g., folder\file.txt) — resolved from the current working directory.
+		 */
+		RtlPathTypeRelative,
+
+		/**
+		 * A local device path using the \\.\ prefix (e.g., \\.\COM1) — accesses the DOS device namespace directly.
+		 */
+		RtlPathTypeLocalDevice,
+
+		/**
+		 * A root-local device path using the \\?\ prefix — bypasses Win32 normalization and accesses raw NT paths.
+		 */
+		RtlPathTypeRootLocalDevice
+	} RTL_PATH_TYPE;
+
+	EXTERN_C_START
+
+	// External NTDLL APIs
+	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
+	NTSYSAPI BOOLEAN NTAPI RtlDosPathNameToRelativeNtPathName_U_WithStatus(
+		_In_ PCWSTR DosName,
+		_Out_ PUNICODE_STRING NtName,
+		_Out_opt_ PWSTR* FilePart,
+		_Out_opt_ PVOID RelativeName);
+
+	EXTERN_C_END
+
+	/**
+	 * @brief Callback function for reporting comparison differences.
+	 *
+	 * @param UserData  User-defined data passed from the FC_CONFIG struct.
+	 * @param Message   A UTF-8 encoded string describing the difference.
+	 * @param Line1     The line number in the first file, or -1 if not applicable.
+	 * @param Line2     The line number in the second file, or -1 if not applicable.
+	 */
 	typedef void (*FC_OUTPUT_CALLBACK)(
 		_In_opt_ void* UserData,
 		_In_z_ const char* Message,
@@ -231,39 +296,6 @@ extern "C" {
 			OutputBuffer[j] = Temp[i - j - 1];
 
 		OutputBuffer[i] = '\0';
-	}
-
-	static inline WCHAR*
-		_FileCheckCreateLongPathW(
-			_In_z_ const WCHAR* Path)
-	{
-		if (!Path)
-			return NULL;
-
-		// If already a long path, duplicate and return
-		if (wcsncmp(Path, L"\\\\?\\", 4) == 0)
-		{
-			size_t Length = wcslen(Path);
-			WCHAR* Duplicated = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (Length + 1) * sizeof(WCHAR));
-			if (!Duplicated)
-				return NULL;
-
-			wcscpy_s(Duplicated, Length + 1, Path);
-			return Duplicated;
-		}
-
-		size_t PathLen = wcslen(Path);
-		size_t TotalLen = 4 + PathLen + 1; // "\\?\" + path + null terminator
-
-		WCHAR* LongPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, TotalLen * sizeof(WCHAR));
-		if (!LongPath)
-			return NULL;
-
-		// Construct \\?\ prefix path
-		wcscpy_s(LongPath, TotalLen, L"\\\\?\\");
-		wcscat_s(LongPath, TotalLen, Path);
-
-		return LongPath;
 	}
 
 	static inline void
@@ -848,6 +880,90 @@ extern "C" {
 		return Result;
 	}
 
+	static BOOL
+		_FileCheckPreparePath(
+			_In_z_ const WCHAR* InputPath,
+			_Outptr_result_nullonfailure_ WCHAR** CanonicalPathOut)
+	{
+		if (!InputPath || !CanonicalPathOut)
+			return FALSE;
+
+		*CanonicalPathOut = NULL;
+
+		// Step 1: Check if input path type is acceptable
+		RTL_PATH_TYPE PathType = RtlDetermineDosPathNameType_U(InputPath);
+		if (PathType == RtlPathTypeUnknown ||
+			PathType == RtlPathTypeLocalDevice ||
+			PathType == RtlPathTypeRootLocalDevice)
+		{
+			return FALSE; // reject raw \\.\ or \\?\ paths
+		}
+
+		// Step 2: Convert to full NT path via native call
+		UNICODE_STRING NtPath;
+		if (!RtlDosPathNameToRelativeNtPathName_U_WithStatus(InputPath, &NtPath, NULL, NULL))
+		{
+			return FALSE;
+		}
+
+		// Step 3: Detect risky NT path prefixes
+		if (NtPath.Length >= 8 * sizeof(WCHAR))
+		{
+			const WCHAR* s = NtPath.Buffer;
+
+			// Block named pipes
+			if ((NtPath.Length >= 36 * sizeof(WCHAR) &&
+				_wcsnicmp(s, L"\\Device\\NamedPipe\\", 18) == 0) ||
+				_wcsnicmp(s, L"\\??\\PIPE\\", 9) == 0)
+			{
+				RtlFreeUnicodeString(&NtPath);
+				return FALSE;
+			}
+
+			// Block all \Device\... raw paths
+			if (_wcsnicmp(s, L"\\Device\\", 8) == 0)
+			{
+				RtlFreeUnicodeString(&NtPath);
+				return FALSE;
+			}
+		}
+
+		// Step 4: Reject reserved DOS device names
+		const WCHAR* base = NtPath.Buffer;
+		for (USHORT i = 0; i < NtPath.Length / sizeof(WCHAR); ++i)
+			if (NtPath.Buffer[i] == L'\\')
+				base = &NtPath.Buffer[i + 1];
+
+		static const WCHAR* ReservedDevices[] = {
+			L"CON", L"PRN", L"AUX", L"NUL",
+			L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
+			L"LPT1", L"LPT2", L"LPT3", L"LPT4", L"LPT5", L"LPT6", L"LPT7", L"LPT8", L"LPT9"
+		};
+		for (int i = 0; i < ARRAYSIZE(ReservedDevices); ++i)
+		{
+			if (_wcsicmp(base, ReservedDevices[i]) == 0)
+			{
+				RtlFreeUnicodeString(&NtPath);
+				return FALSE;
+			}
+		}
+
+		// Step 5: Allocate copy of canonical path
+		size_t len = (NtPath.Length / sizeof(WCHAR)) + 1;
+		WCHAR* outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+		if (!outPath)
+		{
+			RtlFreeUnicodeString(&NtPath);
+			return FALSE;
+		}
+
+		wcsncpy_s(outPath, len, NtPath.Buffer, _TRUNCATE);
+		RtlFreeUnicodeString(&NtPath);
+
+		*CanonicalPathOut = outPath;
+		return TRUE;
+	}
+
 	//
 	// Main Implementation
 	//
@@ -917,47 +1033,48 @@ extern "C" {
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
-		if (Path1 == NULL || Path2 == NULL || Config == NULL)
-		{
+		if (!Path1 || !Path2 || !Config || !Config->Output)
 			return FC_ERROR_INVALID_PARAM;
-		}
 
-		WCHAR* LongPath1 = _FileCheckCreateLongPathW(Path1);
-		WCHAR* LongPath2 = _FileCheckCreateLongPathW(Path2);
-		if (LongPath1 == NULL || LongPath2 == NULL)
+		WCHAR* CanonicalPath1 = NULL;
+		WCHAR* CanonicalPath2 = NULL;
+
+		if (!_FileCheckPreparePath(Path1, &CanonicalPath1) ||
+			!_FileCheckPreparePath(Path2, &CanonicalPath2))
 		{
-			if (LongPath1 != NULL) HeapFree(GetProcessHeap(), 0, LongPath1);
-			if (LongPath2 != NULL) HeapFree(GetProcessHeap(), 0, LongPath2);
-			return FC_ERROR_MEMORY;
+			if (CanonicalPath1) HeapFree(GetProcessHeap(), 0, CanonicalPath1);
+			if (CanonicalPath2) HeapFree(GetProcessHeap(), 0, CanonicalPath2);
+			return FC_ERROR_INVALID_PARAM;
 		}
 
 		FC_RESULT Result;
 
 		switch (Config->Mode)
 		{
-		case FC_MODE_TEXT_ASCII:
-			Result = _FileCheckCompareFilesTextAscii(LongPath1, LongPath2, Config);
-			break;
-		case FC_MODE_TEXT_UNICODE:
-			Result = _FileCheckCompareFilesTextUnicode(LongPath1, LongPath2, Config);
-			break;
-		case FC_MODE_BINARY:
-			Result = _FileCheckCompareFilesBinary(LongPath1, LongPath2, Config);
-			break;
-		case FC_MODE_AUTO:
-		default: {
-			BOOL isText1 = IsProbablyTextFileW(Path1);
-			BOOL isText2 = IsProbablyTextFileW(Path2);
-			if (isText1 && isText2)
-				Result = _FileCheckCompareFilesTextUnicode(LongPath1, LongPath2, Config);
-			else
-				Result = _FileCheckCompareFilesBinary(LongPath1, LongPath2, Config);
-			break;
-		}
+			case FC_MODE_TEXT_ASCII:
+				Result = _FileCheckCompareFilesTextAscii(CanonicalPath1, CanonicalPath2, Config);
+				break;
+			case FC_MODE_TEXT_UNICODE:
+				Result = _FileCheckCompareFilesTextUnicode(CanonicalPath1, CanonicalPath2, Config);
+				break;
+			case FC_MODE_BINARY:
+				Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+				break;
+			case FC_MODE_AUTO:
+			default: {
+				BOOL isText1 = IsProbablyTextFileW(Path1);
+				BOOL isText2 = IsProbablyTextFileW(Path2);
+				if (isText1 && isText2)
+					Result = _FileCheckCompareFilesTextUnicode(CanonicalPath1, CanonicalPath2, Config);
+				else
+					Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+				break;
+			}
 		}
 
-		HeapFree(GetProcessHeap(), 0, LongPath1);
-		HeapFree(GetProcessHeap(), 0, LongPath2);
+		HeapFree(GetProcessHeap(), 0, CanonicalPath1);
+		HeapFree(GetProcessHeap(), 0, CanonicalPath2);
+
 		return Result;
 	}
 
