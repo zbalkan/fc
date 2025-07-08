@@ -618,12 +618,22 @@ extern "C" {
 	}
 
 	static inline BOOL
-		IsProbablyTextBuffer(const BYTE* buffer, DWORD length) {
+		IsProbablyTextBuffer(const BYTE* buffer, DWORD length)
+	{
 		const double textThreshold = 0.90;
 		if (length == 0) return FALSE;
 
+		// Detect UTF BOMs (early exit for known good encodings)
+		if (length >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) // UTF-8 BOM
+			return TRUE;
+		if (length >= 2 && buffer[0] == 0xFF && buffer[1] == 0xFE) // UTF-16 LE BOM
+			return TRUE;
+		if (length >= 2 && buffer[0] == 0xFE && buffer[1] == 0xFF) // UTF-16 BE BOM
+			return TRUE;
+
 		int printable = 0;
-		for (DWORD i = 0; i < length; ++i) {
+		for (DWORD i = 0; i < length; ++i)
+		{
 			BYTE c = buffer[i];
 			if ((c >= 32 && c <= 126) || c == 9 || c == 10 || c == 13) {
 				printable++;
@@ -631,10 +641,13 @@ extern "C" {
 			else if (c == 0) {
 				return FALSE; // Null byte strongly suggests binary
 			}
+			// Could expand here with UTF-8 continuation byte validation, if needed
 		}
+
 		double ratio = (double)printable / length;
-		return (ratio >= textThreshold) ? TRUE : FALSE;
+		return (ratio >= textThreshold);
 	}
+
 
 	static inline BOOL
 		IsProbablyTextFileW(const WCHAR* filepath) {
