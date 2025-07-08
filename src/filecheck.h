@@ -12,8 +12,6 @@ extern "C" {
 #endif
 
 #include <windows.h>
-#include <stdint.h>
-#include <stddef.h>
 #include <winternl.h>
 
 	//
