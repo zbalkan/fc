@@ -705,44 +705,7 @@ extern "C" {
 	}
 
 	static FC_RESULT
-		_FileCheckCompareFilesTextUnicode(
-			_In_z_ const WCHAR* Path1,
-			_In_z_ const WCHAR* Path2,
-			_In_ const FC_CONFIG* Config)
-	{
-		FC_RESULT Result = FC_OK;
-		size_t Length1 = 0, Length2 = 0;
-		char* Buffer1 = NULL;
-		char* Buffer2 = NULL;
-		FC_LINE_ARRAY ArrayA, ArrayB;
-
-		_FileCheckLineArrayInit(&ArrayA);
-		_FileCheckLineArrayInit(&ArrayB);
-
-		Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result);
-		if (!Buffer1) goto cleanup;
-
-		Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result);
-		if (!Buffer2) goto cleanup;
-
-		Result = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
-		if (Result != FC_OK) goto cleanup;
-
-		Result = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
-		if (Result != FC_OK) goto cleanup;
-
-		Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
-
-	cleanup:
-		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
-		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
-		_FileCheckLineArrayFree(&ArrayA);
-		_FileCheckLineArrayFree(&ArrayB);
-		return Result;
-	}
-
-	static FC_RESULT
-		_FileCheckCompareFilesTextAscii(
+		_FileCheckCompareFilesText(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -1050,10 +1013,8 @@ extern "C" {
 		switch (Config->Mode)
 		{
 			case FC_MODE_TEXT_ASCII:
-				Result = _FileCheckCompareFilesTextAscii(CanonicalPath1, CanonicalPath2, Config);
-				break;
 			case FC_MODE_TEXT_UNICODE:
-				Result = _FileCheckCompareFilesTextUnicode(CanonicalPath1, CanonicalPath2, Config);
+				Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
 				break;
 			case FC_MODE_BINARY:
 				Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
@@ -1063,7 +1024,7 @@ extern "C" {
 				BOOL isText1 = IsProbablyTextFileW(Path1);
 				BOOL isText2 = IsProbablyTextFileW(Path2);
 				if (isText1 && isText2)
-					Result = _FileCheckCompareFilesTextUnicode(CanonicalPath1, CanonicalPath2, Config);
+					Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
 				else
 					Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
 				break;
