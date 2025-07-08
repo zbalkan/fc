@@ -513,48 +513,47 @@ extern "C" {
 			_In_ const FC_LINE_ARRAY* ArrayB,
 			_In_ const FC_CONFIG* Config)
 	{
-		size_t Count = min(ArrayA->Count, ArrayB->Count);
-		for (size_t i = 0; i < Count; ++i)
+		// First check: line count mismatch.
+		// Why: Different counts imply files differ in structure, no need to compare hashes.
+		if (ArrayA->Count != ArrayB->Count)
+		{
+			if (Config->Output)
+				Config->Output(Config->UserData, "Files have different line counts", -1, -1);
+			return FC_DIFFERENT;
+		}
+
+		// Compare each line one by one.
+		// Why: Hash comparison is fast and covers most differences;
+		// fallback to byte-wise memcmp is used only if hashes match and case must be preserved.
+		for (size_t i = 0; i < ArrayA->Count; ++i)
 		{
 			const FC_LINE* LineA = &ArrayA->Lines[i];
 			const FC_LINE* LineB = &ArrayB->Lines[i];
 
-			// Hash is the primary comparison mechanism.
+			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
 			{
-				if (Config->Output != NULL)
-				{
+				if (Config->Output)
 					Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
-				}
 				return FC_DIFFERENT;
 			}
 
-			// If case is ignored, the original text will not match, so we can't
-			// reliably use memcmp as a final check against hash collisions.
-			// We only do a final binary check if case is NOT ignored.
+			// If case is ignored, the original line contents may differ (e.g., "abc" vs "ABC").
+			// We skip memcmp in that case because hashes already include normalization.
 			if (!(Config->Flags & FC_IGNORE_CASE))
 			{
+				// Fallback exact match check
 				if (LineA->Length != LineB->Length ||
 					RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
 				{
-					if (Config->Output != NULL)
-					{
+					if (Config->Output)
 						Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
-					}
 					return FC_DIFFERENT;
 				}
 			}
 		}
 
-		if (ArrayA->Count != ArrayB->Count)
-		{
-			if (Config->Output != NULL)
-			{
-				Config->Output(Config->UserData, "Files have different line counts", -1, -1);
-			}
-			return FC_DIFFERENT;
-		}
-
+		// All lines matched exactly or per hash+config — files are equal
 		return FC_OK;
 	}
 
