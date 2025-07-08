@@ -678,40 +678,32 @@ extern "C" {
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
-		size_t Length1, Length2;
-		FC_RESULT Result1, Result2;
-
-		char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
-		if (Buffer1 == NULL)
-		{
-			return Result1;
-		}
-
-		char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
-		if (Buffer2 == NULL)
-		{
-			HeapFree(GetProcessHeap(), 0, Buffer1);
-			return Result2;
-		}
-
+		FC_RESULT Result = FC_OK;
+		size_t Length1 = 0, Length2 = 0;
+		char* Buffer1 = NULL;
+		char* Buffer2 = NULL;
 		FC_LINE_ARRAY ArrayA, ArrayB;
-		Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
-		HeapFree(GetProcessHeap(), 0, Buffer1);
-		if (Result1 != FC_OK)
-		{
-			HeapFree(GetProcessHeap(), 0, Buffer2);
-			return FC_ERROR_MEMORY;
-		}
 
-		Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
-		HeapFree(GetProcessHeap(), 0, Buffer2);
-		if (Result2 != FC_OK)
-		{
-			_FileCheckLineArrayFree(&ArrayA);
-			return FC_ERROR_MEMORY;
-		}
+		_FileCheckLineArrayInit(&ArrayA);
+		_FileCheckLineArrayInit(&ArrayB);
 
-		FC_RESULT Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+		Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result);
+		if (!Buffer1) goto cleanup;
+
+		Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result);
+		if (!Buffer2) goto cleanup;
+
+		Result = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
+		if (Result != FC_OK) goto cleanup;
+
+		Result = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
+		if (Result != FC_OK) goto cleanup;
+
+		Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+
+	cleanup:
+		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
+		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
 		_FileCheckLineArrayFree(&ArrayA);
 		_FileCheckLineArrayFree(&ArrayB);
 		return Result;
@@ -723,40 +715,32 @@ extern "C" {
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
-		size_t Length1, Length2;
-		FC_RESULT Result1, Result2;
-
-		char* Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result1);
-		if (Buffer1 == NULL)
-		{
-			return Result1;
-		}
-
-		char* Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result2);
-		if (Buffer2 == NULL)
-		{
-			HeapFree(GetProcessHeap(), 0, Buffer1);
-			return Result2;
-		}
-
+		FC_RESULT Result = FC_OK;
+		size_t Length1 = 0, Length2 = 0;
+		char* Buffer1 = NULL;
+		char* Buffer2 = NULL;
 		FC_LINE_ARRAY ArrayA, ArrayB;
-		Result1 = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
-		HeapFree(GetProcessHeap(), 0, Buffer1);
-		if (Result1 != FC_OK)
-		{
-			HeapFree(GetProcessHeap(), 0, Buffer2);
-			return FC_ERROR_MEMORY;
-		}
 
-		Result2 = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
-		HeapFree(GetProcessHeap(), 0, Buffer2);
-		if (Result2 != FC_OK)
-		{
-			_FileCheckLineArrayFree(&ArrayA);
-			return FC_ERROR_MEMORY;
-		}
+		_FileCheckLineArrayInit(&ArrayA);
+		_FileCheckLineArrayInit(&ArrayB);
 
-		FC_RESULT Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+		Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result);
+		if (!Buffer1) goto cleanup;
+
+		Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result);
+		if (!Buffer2) goto cleanup;
+
+		Result = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
+		if (Result != FC_OK) goto cleanup;
+
+		Result = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
+		if (Result != FC_OK) goto cleanup;
+
+		Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+
+	cleanup:
+		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
+		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
 		_FileCheckLineArrayFree(&ArrayA);
 		_FileCheckLineArrayFree(&ArrayB);
 		return Result;
