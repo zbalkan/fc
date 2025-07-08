@@ -237,29 +237,31 @@ extern "C" {
 		_FileCheckCreateLongPathW(
 			_In_z_ const WCHAR* Path)
 	{
-		size_t Length = 0;
-		const WCHAR* Ptr = Path;
-		while (*Ptr++) Length++;
-
-		// Allocate for "\\?\" + path + null terminator
-		WCHAR* LongPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (Length + 5) * sizeof(WCHAR));
-		if (LongPath == NULL)
-		{
+		if (!Path)
 			return NULL;
-		}
 
-		LongPath[0] = L'\\';
-		LongPath[1] = L'\\';
-		LongPath[2] = L'?';
-		LongPath[3] = L'\\';
-
-		Ptr = Path;
-		WCHAR* Destination = LongPath + 4;
-		while (*Ptr)
+		// If already a long path, duplicate and return
+		if (wcsncmp(Path, L"\\\\?\\", 4) == 0)
 		{
-			*Destination++ = *Ptr++;
+			size_t Length = wcslen(Path);
+			WCHAR* Duplicated = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (Length + 1) * sizeof(WCHAR));
+			if (!Duplicated)
+				return NULL;
+
+			wcscpy_s(Duplicated, Length + 1, Path);
+			return Duplicated;
 		}
-		*Destination = L'\0';
+
+		size_t PathLen = wcslen(Path);
+		size_t TotalLen = 4 + PathLen + 1; // "\\?\" + path + null terminator
+
+		WCHAR* LongPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, TotalLen * sizeof(WCHAR));
+		if (!LongPath)
+			return NULL;
+
+		// Construct \\?\ prefix path
+		wcscpy_s(LongPath, TotalLen, L"\\\\?\\");
+		wcscat_s(LongPath, TotalLen, Path);
 
 		return LongPath;
 	}
