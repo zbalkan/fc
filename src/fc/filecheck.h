@@ -101,11 +101,12 @@ extern "C" {
 
 	// External NTDLL APIs
 	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
-	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToRelativeNtPathName_U_WithStatus(
-		_In_ PCWSTR DosName,
-		_Out_ PUNICODE_STRING NtName,
-		_Out_opt_ PWSTR* FilePart,
-		_Out_opt_ PVOID RelativeName);
+	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
+		__in PCWSTR DosFileName,
+		__out PUNICODE_STRING NtFileName,
+		__deref_opt_out_opt PWSTR* FilePart,
+		__reserved PVOID Reserved
+	);
 	EXTERN_C_END
 
 	/**
@@ -860,15 +861,37 @@ extern "C" {
 		}
 
 		// Step 2: Convert to full NT path via native call
+		// TODO: Check if the path is already in NT format, if not, convert it
+		// Note: RtlDosPathNameToRelativeNtPathName_U_WithStatus returns a relative NT path,
+		// but we can use it to validate and canonicalize the input.
+		// It will also handle long paths correctly.
+		// Sample input: "C:\path\to\file.txt" or "\\?\C:\path\to\file.txt"
+		// Sample output: "\??\C:\path\to\file.txt" or "\Device\HarddiskVolume1\path\to\file.txt"
+		// Check PathType variable's value to ensure we handle it correctly.
+		if(PathType == RtlPathTypeUncAbsolute ||
+			PathType == RtlPathTypeDriveAbsolute ||
+			PathType == RtlPathTypeDriveRelative ||
+			PathType == RtlPathTypeRooted ||
+			PathType == RtlPathTypeRelative)
+		{
+			// These are acceptable, proceed to conversion
+		}
+		else
+		{
+			return FALSE; // reject other types like UNC relative, etc.
+		}
+
+
 		UNICODE_STRING NtPath;
-		NTSTATUS Status = RtlDosPathNameToRelativeNtPathName_U_WithStatus(
+		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
 			NULL, // FilePart not needed
-			NULL); // RelativeName not needed
+			NULL); // Reserved
 
-		if (NT_SUCCESS(!Status))
+		if (!NT_SUCCESS(Status))
 		{
+			RtlFreeUnicodeString(&NtPath);
 			return FALSE;
 		}
 
