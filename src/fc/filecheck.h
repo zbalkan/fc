@@ -101,12 +101,11 @@ extern "C" {
 
 	// External NTDLL APIs
 	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
-	NTSYSAPI BOOLEAN NTAPI RtlDosPathNameToRelativeNtPathName_U_WithStatus(
+	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToRelativeNtPathName_U_WithStatus(
 		_In_ PCWSTR DosName,
 		_Out_ PUNICODE_STRING NtName,
 		_Out_opt_ PWSTR* FilePart,
 		_Out_opt_ PVOID RelativeName);
-
 	EXTERN_C_END
 
 	/**
@@ -862,7 +861,13 @@ extern "C" {
 
 		// Step 2: Convert to full NT path via native call
 		UNICODE_STRING NtPath;
-		if (!RtlDosPathNameToRelativeNtPathName_U_WithStatus(InputPath, &NtPath, NULL, NULL))
+		NTSTATUS Status = RtlDosPathNameToRelativeNtPathName_U_WithStatus(
+			InputPath,
+			&NtPath,
+			NULL, // FilePart not needed
+			NULL); // RelativeName not needed
+
+		if (NT_SUCCESS(!Status))
 		{
 			return FALSE;
 		}
