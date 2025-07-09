@@ -435,56 +435,57 @@ extern "C" {
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
-	{
-		*NewLength = 0;
-		const int TabWidth = 4;
-
-		BOOL HasTabs = FALSE;
-		size_t ExpandedLength = 0;
-
-		for (size_t i = 0; i < SourceLength; ++i)
 		{
-			if (Source[i] == '\t')
-			{
-				HasTabs = TRUE;
-				ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
-			}
-			else
-			{
-				ExpandedLength++;
-			}
-		}
+    *NewLength = 0;
+    const int TabWidth = 4;
 
-		if (!HasTabs)
-		{
-			*NewLength = SourceLength;
-			return (char*)Source; // Return input directly – caller must not free it
-		}
+    BOOL HasTabs = FALSE;
+    size_t ExpandedLength = 0;
 
-		char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
-		if (Dest == NULL)
-			return NULL;
+    for (size_t i = 0; i < SourceLength; ++i)
+    {
+        if (Source[i] == '\t')
+        {
+            HasTabs = TRUE;
+            ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
+        }
+        else
+        {
+            ExpandedLength++;
+        }
+    }
 
-		size_t DestIndex = 0;
-		for (size_t i = 0; i < SourceLength; ++i)
-		{
-			if (Source[i] == '\t')
-			{
-				size_t SpacesToAdd = TabWidth - (DestIndex % TabWidth);
-				for (size_t s = 0; s < SpacesToAdd; ++s)
-				{
-					Dest[DestIndex++] = ' ';
-				}
-			}
-			else
-			{
-				Dest[DestIndex++] = Source[i];
-			}
-		}
-		Dest[DestIndex] = '\0';
-		*NewLength = DestIndex;
-		return Dest;
-	}
+    // Always return a heap-allocated copy, even if there are no tabs
+    if (!HasTabs)
+    {
+        *NewLength = SourceLength;
+        return _FileCheckStringDuplicateRange(Source, SourceLength);
+    }
+
+    char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
+    if (Dest == NULL)
+        return NULL;
+
+    size_t DestIndex = 0;
+    for (size_t i = 0; i < SourceLength; ++i)
+    {
+        if (Source[i] == '\t')
+        {
+            size_t SpacesToAdd = TabWidth - (DestIndex % TabWidth);
+            for (size_t s = 0; s < SpacesToAdd; ++s)
+            {
+                Dest[DestIndex++] = ' ';
+            }
+        }
+        else
+        {
+            Dest[DestIndex++] = Source[i];
+        }
+    }
+    Dest[DestIndex] = '\0';
+    *NewLength = DestIndex;
+    return Dest;
+}
 
 	static inline FC_RESULT
 		_FileCheckParseLines(
@@ -528,7 +529,9 @@ extern "C" {
 				}
 
 				if (Expanded != LineText)
-					HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
+					HeapFree(GetProcessHeap(), 0, LineText);
+
+				FinalText = Expanded; // Always update FinalText!
 			}
 
 			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Config);

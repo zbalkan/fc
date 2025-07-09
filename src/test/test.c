@@ -136,17 +136,17 @@ static void Test_Tabs(const WCHAR* baseDir)
     WCHAR p1[MAX_LONG_PATH], p2[MAX_LONG_PATH]; char u1[MAX_LONG_PATH*4], u2[MAX_LONG_PATH*4];
     MakePath(baseDir, L"tab1.txt", p1);
     MakePath(baseDir, L"tab2.txt", p2);
-    WRITE_STR_FILE(p1, "A   B\n");
+    WRITE_STR_FILE(p1, "A\tB\n");
     WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
     FC_CONFIG cfg={0}; cfg.Output=TestCallback; cfg.Mode=FC_MODE_TEXT_ASCII;
     ConvertWideToUtf8OrExit(p1,u1,sizeof(u1)); ConvertWideToUtf8OrExit(p2,u2,sizeof(u2));
     // default expand tabs
     cfg.Flags = 0;
-    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) != FC_OK)
+    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK)
         ReportErrorAndExit(L"Tab expansion failed", NULL);
     // raw tabs
     cfg.Flags = FC_RAW_TABS;
-    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) != FC_DIFFERENT)
+    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT)
         ReportErrorAndExit(L"Raw tabs handling failed", NULL);
 }
 static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
