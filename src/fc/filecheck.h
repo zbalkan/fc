@@ -109,19 +109,19 @@ extern "C" {
 	);
 	EXTERN_C_END
 
-	/**
-	 * @brief Callback function for reporting comparison differences.
-	 *
-	 * @param UserData  User-defined data passed from the FC_CONFIG struct.
-	 * @param Message   A UTF-8 encoded string describing the difference.
-	 * @param Line1     The line number in the first file, or -1 if not applicable.
-	 * @param Line2     The line number in the second file, or -1 if not applicable.
-	 */
-	typedef void (*FC_OUTPUT_CALLBACK)(
-		_In_opt_ void* UserData,
-		_In_z_ const char* Message,
-		_In_ int Line1,
-		_In_ int Line2);
+		/**
+		 * @brief Callback function for reporting comparison differences.
+		 *
+		 * @param UserData  User-defined data passed from the FC_CONFIG struct.
+		 * @param Message   A UTF-8 encoded string describing the difference.
+		 * @param Line1     The line number in the first file, or -1 if not applicable.
+		 * @param Line2     The line number in the second file, or -1 if not applicable.
+		 */
+		typedef void (*FC_OUTPUT_CALLBACK)(
+			_In_opt_ void* UserData,
+			_In_z_ const char* Message,
+			_In_ int Line1,
+			_In_ int Line2);
 
 	//
 	// Configuration structure for a file comparison operation.
@@ -399,25 +399,25 @@ extern "C" {
 		if (LineArray->Count + 1 > LineArray->Capacity)
 		{
 			size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-            if (LineArray->Count + 1 > LineArray->Capacity)
-            {
-                size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-                FC_LINE* Temp = NULL;
-                if (LineArray->Lines == NULL)
-                {
-                    Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
-                }
-                else
-                {
-                    Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
-                }
-                if (Temp == NULL)
-                {
-                    return FALSE;
-                }
-                LineArray->Lines = Temp;
-                LineArray->Capacity = NewCapacity;
-            }
+			if (LineArray->Count + 1 > LineArray->Capacity)
+			{
+				size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
+				FC_LINE* Temp = NULL;
+				if (LineArray->Lines == NULL)
+				{
+					Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
+				}
+				else
+				{
+					Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
+				}
+				if (Temp == NULL)
+				{
+					return FALSE;
+				}
+				LineArray->Lines = Temp;
+				LineArray->Capacity = NewCapacity;
+			}
 		}
 		LineArray->Lines[LineArray->Count].Text = Text;
 		LineArray->Lines[LineArray->Count].Length = Length;
@@ -584,12 +584,47 @@ extern "C" {
 			if (!(Config->Flags & FC_IGNORE_CASE))
 			{
 				// Fallback exact match check
-				if (LineA->Length != LineB->Length ||
-					RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+				// If FC_IGNORE_WS is set, skip whitespace in comparison
+				if (Config->Flags & FC_IGNORE_WS)
 				{
-					if (Config->Output)
-						Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
-					return FC_DIFFERENT;
+					const char* a = LineA->Text;
+					const char* b = LineB->Text;
+					size_t la = LineA->Length, lb = LineB->Length;
+					size_t ia = 0, ib = 0;
+					while (ia < la && ib < lb)
+					{
+						while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
+						while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
+						if (ia < la && ib < lb)
+						{
+							if (a[ia] != b[ib])
+							{
+								if (Config->Output)
+									Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
+								return FC_DIFFERENT;
+							}
+							++ia; ++ib;
+						}
+					}
+					// Skip trailing whitespace
+					while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
+					while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
+					if (ia != la || ib != lb)
+					{
+						if (Config->Output)
+							Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
+						return FC_DIFFERENT;
+					}
+				}
+				else
+				{
+					if (LineA->Length != LineB->Length ||
+						RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+					{
+						if (Config->Output)
+							Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
+						return FC_DIFFERENT;
+					}
 				}
 			}
 		}
@@ -702,7 +737,6 @@ extern "C" {
 		double ratio = (double)printable / length;
 		return (ratio >= textThreshold);
 	}
-
 
 	static inline BOOL
 		IsProbablyTextFileW(const WCHAR* filepath) {
@@ -904,7 +938,6 @@ extern "C" {
 		{
 			return FALSE; // reject other types like UNC relative, etc.
 		}
-
 
 		UNICODE_STRING NtPath;
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
