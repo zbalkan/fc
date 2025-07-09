@@ -40,21 +40,21 @@ extern "C" {
 	//
 	// Flags to modify comparison behavior.
 	//
-	#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
-	#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
-	#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
-	#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
+#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
+#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
+#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
 
-	/**
-	 * @enum RTL_PATH_TYPE
-	 * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
-	 *
-	 * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
-	 * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
-	 * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
-	 *
-	 * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
-	 */
+/**
+ * @enum RTL_PATH_TYPE
+ * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
+ *
+ * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
+ * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
+ * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
+ *
+ * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
+ */
 	typedef enum _RTL_PATH_TYPE {
 		/**
 		 * The path type could not be determined. Typically indicates malformed or empty input.
@@ -99,8 +99,8 @@ extern "C" {
 
 	EXTERN_C_START
 
-	// External NTDLL APIs
-	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
+		// External NTDLL APIs
+		NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
 	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
 		__in PCWSTR DosFileName,
 		__out PUNICODE_STRING NtFileName,
@@ -399,16 +399,25 @@ extern "C" {
 		if (LineArray->Count + 1 > LineArray->Capacity)
 		{
 			size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-			FC_LINE* Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(),
-				0,
-				LineArray->Lines,
-				NewCapacity * sizeof(FC_LINE));
-			if (Temp == NULL)
-			{
-				return FALSE;
-			}
-			LineArray->Lines = Temp;
-			LineArray->Capacity = NewCapacity;
+            if (LineArray->Count + 1 > LineArray->Capacity)
+            {
+                size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
+                FC_LINE* Temp = NULL;
+                if (LineArray->Lines == NULL)
+                {
+                    Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
+                }
+                else
+                {
+                    Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
+                }
+                if (Temp == NULL)
+                {
+                    return FALSE;
+                }
+                LineArray->Lines = Temp;
+                LineArray->Capacity = NewCapacity;
+            }
 		}
 		LineArray->Lines[LineArray->Count].Text = Text;
 		LineArray->Lines[LineArray->Count].Length = Length;
@@ -611,7 +620,22 @@ extern "C" {
 			return NULL;
 
 		LARGE_INTEGER FileSize;
-		if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1)
+		BOOL SizeSuccess = GetFileSizeEx(FileHandle, &FileSize);
+		if (!SizeSuccess) {
+			DWORD Err = GetLastError();
+			CloseHandle(FileHandle);
+			if (Err == ERROR_FILE_NOT_FOUND || Err == ERROR_PATH_NOT_FOUND)
+			{
+				*Result = FC_ERROR_INVALID_PARAM; // File not found
+			}
+			else
+			{
+				*Result = FC_ERROR_IO; // Other IO error
+			}
+			return NULL;
+		}
+
+		if (FileSize.QuadPart > (ULONGLONG)SIZE_MAX)
 		{
 			CloseHandle(FileHandle);
 			return NULL;
@@ -868,7 +892,7 @@ extern "C" {
 		// Sample input: "C:\path\to\file.txt" or "\\?\C:\path\to\file.txt"
 		// Sample output: "\??\C:\path\to\file.txt" or "\Device\HarddiskVolume1\path\to\file.txt"
 		// Check PathType variable's value to ensure we handle it correctly.
-		if(PathType == RtlPathTypeUncAbsolute ||
+		if (PathType == RtlPathTypeUncAbsolute ||
 			PathType == RtlPathTypeDriveAbsolute ||
 			PathType == RtlPathTypeDriveRelative ||
 			PathType == RtlPathTypeRooted ||
@@ -1040,23 +1064,23 @@ extern "C" {
 
 		switch (Config->Mode)
 		{
-			case FC_MODE_TEXT_ASCII:
-			case FC_MODE_TEXT_UNICODE:
+		case FC_MODE_TEXT_ASCII:
+		case FC_MODE_TEXT_UNICODE:
+			Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
+			break;
+		case FC_MODE_BINARY:
+			Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+			break;
+		case FC_MODE_AUTO:
+		default: {
+			BOOL isText1 = IsProbablyTextFileW(Path1);
+			BOOL isText2 = IsProbablyTextFileW(Path2);
+			if (isText1 && isText2)
 				Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			case FC_MODE_BINARY:
+			else
 				Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			case FC_MODE_AUTO:
-			default: {
-				BOOL isText1 = IsProbablyTextFileW(Path1);
-				BOOL isText2 = IsProbablyTextFileW(Path2);
-				if (isText1 && isText2)
-					Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-				else
-					Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			}
+			break;
+		}
 		}
 
 		HeapFree(GetProcessHeap(), 0, CanonicalPath1);
