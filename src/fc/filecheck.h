@@ -173,14 +173,14 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
-	typedef struct _FC_LINE
+	typedef struct
 	{
 		char* Text;
 		size_t Length;
 		UINT Hash;
 	} FC_LINE;
 
-	typedef struct _FC_LINE_ARRAY
+	typedef struct
 	{
 		FC_LINE* Lines;
 		size_t Count;
@@ -424,19 +424,19 @@ extern "C" {
 	}
 
 	// Linked-list node holding a chunk of characters
-	typedef struct _FC_CharNode {
+	typedef struct _FC_CHAR_NODE_STRUCT {
 		char* data;
 		size_t length;
-		struct _FC_CharNode* next;
-	} _FC_CharNode;
+		struct _FC_CHAR_NODE_STRUCT* next;
+	} _FC_CHAR_NODE;
 
 	// Create a new node with a copy of the given data
-	static _FC_CharNode*
+	static _FC_CHAR_NODE*
 		_FC_CreateNode(
 			_In_reads_(length) const char* data,
 			_In_ size_t length)
 	{
-		_FC_CharNode* node = (_FC_CharNode*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FC_CharNode));
+		_FC_CHAR_NODE* node = (_FC_CHAR_NODE*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FC_CHAR_NODE));
 		if (!node)
 			return NULL;
 		node->data = (char*)HeapAlloc(GetProcessHeap(), 0, length + 1);
@@ -454,10 +454,10 @@ extern "C" {
 	// Free the entire linked list
 	static void
 		_FC_FreeList(
-			_In_opt_ _FC_CharNode* head)
+			_In_opt_ _FC_CHAR_NODE* head)
 	{
 		while (head) {
-			_FC_CharNode* next = head->next;
+			_FC_CHAR_NODE* next = head->next;
 			HeapFree(GetProcessHeap(), 0, head->data);
 			HeapFree(GetProcessHeap(), 0, head);
 			head = next;
@@ -465,18 +465,18 @@ extern "C" {
 	}
 
 	// Build a linked list from the source string, splitting at tabs
-	static _FC_CharNode*
+	static _FC_CHAR_NODE*
 		_FC_BuildList(
 			_In_reads_(srcLen) const char* src,
 			_In_ size_t srcLen)
 	{
-		_FC_CharNode* head = NULL;
-		_FC_CharNode* tail = NULL;
+		_FC_CHAR_NODE* head = NULL;
+		_FC_CHAR_NODE* tail = NULL;
 		size_t i = 0;
 
 		while (i < srcLen) {
 			if (src[i] == '\t') {
-				_FC_CharNode* node = _FC_CreateNode("\t", 1);
+				_FC_CHAR_NODE* node = _FC_CreateNode("\t", 1);
 				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
@@ -491,7 +491,7 @@ extern "C" {
 				while (i < srcLen && src[i] != '\t')
 					++i;
 				size_t len = i - start;
-				_FC_CharNode* node = _FC_CreateNode(src + start, len);
+				_FC_CHAR_NODE* node = _FC_CreateNode(src + start, len);
 				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
@@ -507,11 +507,11 @@ extern "C" {
 	// Replace each tab node with a node containing TabWidth spaces
 	static void
 		_FC_ExpandTabsInList(
-			_Inout_ _FC_CharNode** headPtr,
+			_Inout_ _FC_CHAR_NODE** headPtr,
 			_In_ size_t TabWidth)
 	{
-		_FC_CharNode* prev = NULL;
-		_FC_CharNode* curr = *headPtr;
+		_FC_CHAR_NODE* prev = NULL;
+		_FC_CHAR_NODE* curr = *headPtr;
 
 		while (curr) {
 			if (curr->length == 1 && curr->data[0] == '\t') {
@@ -522,7 +522,7 @@ extern "C" {
 				memset(spaces, ' ', TabWidth);
 				spaces[TabWidth] = '\0';
 
-				_FC_CharNode* spaceNode = _FC_CreateNode(spaces, TabWidth);
+				_FC_CHAR_NODE* spaceNode = _FC_CreateNode(spaces, TabWidth);
 				HeapFree(GetProcessHeap(), 0, spaces);
 				if (!spaceNode)
 					return;
@@ -547,11 +547,11 @@ extern "C" {
 	// Flatten the linked list back into a single string
 	static char*
 		_FC_CheckFlattenList(
-			_In_ _FC_CharNode* head,
+			_In_ _FC_CHAR_NODE* head,
 			_Out_ size_t* newLength)
 	{
 		size_t total = 0;
-		for (_FC_CharNode* n = head; n; n = n->next)
+		for (_FC_CHAR_NODE* n = head; n; n = n->next)
 			total += n->length;
 
 		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
@@ -559,7 +559,7 @@ extern "C" {
 			return NULL;
 
 		size_t pos = 0;
-		for (_FC_CharNode* n = head; n; n = n->next) {
+		for (_FC_CHAR_NODE* n = head; n; n = n->next) {
 			memcpy(dest + pos, n->data, n->length);
 			pos += n->length;
 		}
@@ -576,7 +576,7 @@ extern "C" {
 			_Out_ size_t* NewLength)
 	{
 		const size_t TabWidth = 4;
-		_FC_CharNode* list = _FC_BuildList(Source, SourceLength);
+		_FC_CHAR_NODE* list = _FC_BuildList(Source, SourceLength);
 		if (!list)
 			return NULL;
 		_FC_ExpandTabsInList(&list, TabWidth);
