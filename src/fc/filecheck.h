@@ -180,12 +180,146 @@ extern "C" {
 		UINT Hash;
 	} _FC_LINE;
 
+	/*
+ * Generic, reusable dynamic buffer for any data type.
+ * This single structure replaces _FC_LINE_ARRAY and the _FC_CHAR_NODE linked list.
+ */
 	typedef struct
 	{
-		_FC_LINE* Lines;
-		size_t Count;
-		size_t Capacity;
-	} _FC_LINE_ARRAY;
+		void* pData;       // Pointer to the block of memory holding the elements.
+		size_t ElementSize; // The size of a single element (e.g., sizeof(char)).
+		size_t Count;       // The number of elements currently in the buffer.
+		size_t Capacity;    // The number of elements the buffer can hold before resizing.
+	} _FC_BUFFER;
+
+	// Initializes a new, empty buffer to hold elements of a specific size.
+	static inline void
+		_FC_BufferInit(
+			_Inout_ _FC_BUFFER* pBuffer,
+			_In_ size_t elementSize)
+	{
+		pBuffer->pData = NULL;
+		pBuffer->ElementSize = elementSize;
+		pBuffer->Count = 0;
+		pBuffer->Capacity = 0;
+	}
+
+	// Frees the internal memory of the buffer.
+	// NOTE: Does not free nested pointers within the elements themselves.
+	static inline void
+		_FC_BufferFree(
+			_Inout_ _FC_BUFFER* pBuffer)
+	{
+		if (pBuffer->pData != NULL)
+		{
+			HeapFree(GetProcessHeap(), 0, pBuffer->pData);
+		}
+		pBuffer->pData = NULL;
+		pBuffer->Count = 0;
+		pBuffer->Capacity = 0;
+	}
+
+	// Ensures the buffer has enough capacity for at least 'additionalCount' new elements.
+	// Returns FALSE on memory allocation failure.
+	static inline BOOL
+		_FC_BufferEnsureCapacity(
+			_Inout_ _FC_BUFFER* pBuffer,
+			_In_ size_t additionalCount)
+	{
+		if (pBuffer->Count + additionalCount > pBuffer->Capacity)
+		{
+			size_t newCapacity = pBuffer->Capacity > 0 ? pBuffer->Capacity * 2 : 8;
+			if (newCapacity < pBuffer->Count + additionalCount)
+			{
+				newCapacity = pBuffer->Count + additionalCount;
+			}
+
+			size_t newSizeInBytes = newCapacity * pBuffer->ElementSize;
+			void* pNewData = pBuffer->pData
+				? HeapReAlloc(GetProcessHeap(), 0, pBuffer->pData, newSizeInBytes)
+				: HeapAlloc(GetProcessHeap(), 0, newSizeInBytes);
+
+			if (pNewData == NULL)
+			{
+				return FALSE;
+			}
+
+			pBuffer->pData = pNewData;
+			pBuffer->Capacity = newCapacity;
+		}
+		return TRUE;
+	}
+
+	// Appends a single element to the end of the buffer.
+	static inline BOOL
+		_FC_BufferAppend(
+			_Inout_ _FC_BUFFER* pBuffer,
+			_In_ const void* pElement)
+	{
+		if (!_FC_BufferEnsureCapacity(pBuffer, 1))
+		{
+			return FALSE;
+		}
+
+		void* pDestination = (char*)pBuffer->pData + (pBuffer->Count * pBuffer->ElementSize);
+		memcpy(pDestination, pElement, pBuffer->ElementSize);
+		pBuffer->Count++;
+		return TRUE;
+	}
+
+	// Appends a range of elements to the end of the buffer.
+	static inline BOOL
+		_FC_BufferAppendRange(
+			_Inout_ _FC_BUFFER* pBuffer,
+			_In_ const void* pElements,
+			_In_ size_t count)
+	{
+		if (count == 0) return TRUE;
+		if (!_FC_BufferEnsureCapacity(pBuffer, count))
+		{
+			return FALSE;
+		}
+
+		void* pDestination = (char*)pBuffer->pData + (pBuffer->Count * pBuffer->ElementSize);
+		memcpy(pDestination, pElements, count * pBuffer->ElementSize);
+		pBuffer->Count += count;
+		return TRUE;
+	}
+
+	// Returns a pointer to the element at a given index.
+	static inline void*
+		_FC_BufferGet(
+			_In_ const _FC_BUFFER* pBuffer,
+			_In_ size_t index)
+	{
+		if (index >= pBuffer->Count)
+		{
+			return NULL;
+		}
+		return (char*)pBuffer->pData + (index * pBuffer->ElementSize);
+	}
+
+	// Convenience function to null-terminate and return a character buffer as a string.
+	static inline char*
+		_FC_BufferToString(
+			_Inout_ _FC_BUFFER* pBuffer)
+	{
+		// Ensure it's a char buffer.
+		if (pBuffer->ElementSize != sizeof(char)) return NULL;
+
+		// Append a null terminator if not already present.
+		if (pBuffer->Count == 0 || *((char*)_FC_BufferGet(pBuffer, pBuffer->Count - 1)) != '\0')
+		{
+			char nullChar = '\0';
+			if (!_FC_BufferAppend(pBuffer, &nullChar))
+			{
+				// On failure, we can't return a valid string.
+				_FC_BufferFree(pBuffer);
+				return NULL;
+			}
+		}
+		return (char*)pBuffer->pData;
+	}
 
 	static inline unsigned char
 		_FC_ToLowerAscii(
@@ -265,35 +399,6 @@ extern "C" {
 		return DestBuffer;
 	}
 
-	static inline void
-		_FC_LineArrayInit(
-			_Inout_ _FC_LINE_ARRAY* LineArray)
-	{
-		LineArray->Lines = NULL;
-		LineArray->Count = 0;
-		LineArray->Capacity = 0;
-	}
-
-	static inline void
-		_FC_LineArrayFree(
-			_Inout_ _FC_LINE_ARRAY* LineArray)
-	{
-		if (LineArray->Lines != NULL)
-		{
-			for (size_t i = 0; i < LineArray->Count; ++i)
-			{
-				if (LineArray->Lines[i].Text != NULL)
-				{
-					HeapFree(GetProcessHeap(), 0, LineArray->Lines[i].Text);
-				}
-			}
-			HeapFree(GetProcessHeap(), 0, LineArray->Lines);
-		}
-		LineArray->Lines = NULL;
-		LineArray->Count = 0;
-		LineArray->Capacity = 0;
-	}
-
 	static inline UINT
 		_FC_ComputeHash(
 			_In_reads_(Length) const char* String,
@@ -358,186 +463,17 @@ extern "C" {
 		return Hash;
 	}
 
-	static inline BOOL
-		_FC_LineArrayAppend(
-			_Inout_ _FC_LINE_ARRAY* LineArray,
-			_In_ _Post_invalid_ char* Text,
-			_In_ size_t Length,
-			_In_ UINT Hash)
+	static void _FC_FreeLineBufferContents(_Inout_ _FC_BUFFER* pLineBuffer)
 	{
-		if (LineArray->Count + 1 > LineArray->Capacity)
+		for (size_t i = 0; i < pLineBuffer->Count; ++i)
 		{
-			size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-			if (LineArray->Count + 1 > LineArray->Capacity)
+			_FC_LINE* line = (_FC_LINE*)_FC_BufferGet(pLineBuffer, i);
+			if (line && line->Text)
 			{
-				size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-				_FC_LINE* Temp = NULL;
-				if (LineArray->Lines == NULL)
-				{
-					Temp = (_FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(_FC_LINE));
-				}
-				else
-				{
-					Temp = (_FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(_FC_LINE));
-				}
-				if (Temp == NULL)
-				{
-					return FALSE;
-				}
-				LineArray->Lines = Temp;
-				LineArray->Capacity = NewCapacity;
+				HeapFree(GetProcessHeap(), 0, line->Text);
 			}
 		}
-		LineArray->Lines[LineArray->Count].Text = Text;
-		LineArray->Lines[LineArray->Count].Length = Length;
-		LineArray->Lines[LineArray->Count].Hash = Hash;
-		LineArray->Count++;
-		return TRUE;
-	}
-
-	// Linked-list node holding a chunk of characters
-	typedef struct _FC_CHAR_NODE_STRUCT {
-		char* Payload;
-		size_t Length;
-		struct _FC_CHAR_NODE_STRUCT* Next;
-	} _FC_CHAR_NODE;
-
-	// Create a new node with a copy of the given data
-	static _FC_CHAR_NODE*
-		_FC_CreateNode(
-			_In_reads_(length) const char* Payload,
-			_In_ size_t Length)
-	{
-		_FC_CHAR_NODE* node = (_FC_CHAR_NODE*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FC_CHAR_NODE));
-		if (!node)
-			return NULL;
-		node->Payload = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
-		if (!node->Payload) {
-			HeapFree(GetProcessHeap(), 0, node);
-			return NULL;
-		}
-		memcpy(node->Payload, Payload, Length);
-		node->Payload[Length] = '\0';
-		node->Length = Length;
-		node->Next = NULL;
-		return node;
-	}
-
-	// Free the entire linked list
-	static void
-		_FC_FreeList(
-			_In_opt_ _FC_CHAR_NODE* Head)
-	{
-		while (Head) {
-			_FC_CHAR_NODE* next = Head->Next;
-			HeapFree(GetProcessHeap(), 0, Head->Payload);
-			HeapFree(GetProcessHeap(), 0, Head);
-			Head = next;
-		}
-	}
-
-	// Build a linked list from the source string, splitting at tabs
-	static _FC_CHAR_NODE*
-		_FC_BuildList(
-			_In_reads_(SourceLength) const char* Source,
-			_In_ size_t SourceLength)
-	{
-		_FC_CHAR_NODE* head = NULL;
-		_FC_CHAR_NODE* tail = NULL;
-		size_t i = 0;
-
-		while (i < SourceLength) {
-			if (Source[i] == '\t') {
-				_FC_CHAR_NODE* node = _FC_CreateNode("\t", 1);
-				if (!node) { _FC_FreeList(head); return NULL; }
-				if (!head)
-					head = tail = node;
-				else {
-					tail->Next = node;
-					tail = node;
-				}
-				i++;
-			}
-			else {
-				size_t start = i;
-				while (i < SourceLength && Source[i] != '\t')
-					++i;
-				size_t len = i - start;
-				_FC_CHAR_NODE* node = _FC_CreateNode(Source + start, len);
-				if (!node) { _FC_FreeList(head); return NULL; }
-				if (!head)
-					head = tail = node;
-				else {
-					tail->Next = node;
-					tail = node;
-				}
-			}
-		}
-		return head;
-	}
-
-	// Replace each tab node with a node containing TabWidth spaces
-	static void
-		_FC_ExpandTabsInList(
-			_Inout_ _FC_CHAR_NODE** HeadPtr,
-			_In_ size_t TabWidth)
-	{
-		_FC_CHAR_NODE* prev = NULL;
-		_FC_CHAR_NODE* curr = *HeadPtr;
-
-		while (curr) {
-			if (curr->Length == 1 && curr->Payload[0] == '\t') {
-				// Allocate space buffer
-				char* spaces = (char*)HeapAlloc(GetProcessHeap(), 0, TabWidth + 1);
-				if (!spaces)
-					return;
-				memset(spaces, ' ', TabWidth);
-				spaces[TabWidth] = '\0';
-
-				_FC_CHAR_NODE* spaceNode = _FC_CreateNode(spaces, TabWidth);
-				HeapFree(GetProcessHeap(), 0, spaces);
-				if (!spaceNode)
-					return;
-
-				// Splice in the new node
-				spaceNode->Next = curr->Next;
-				if (prev)
-					prev->Next = spaceNode;
-				else
-					*HeadPtr = spaceNode;
-
-				// Free the old tab node
-				HeapFree(GetProcessHeap(), 0, curr->Payload);
-				HeapFree(GetProcessHeap(), 0, curr);
-				curr = spaceNode;
-			}
-			prev = curr;
-			curr = curr->Next;
-		}
-	}
-
-	// Flatten the linked list back into a single string
-	static char*
-		_FC_FlattenList(
-			_In_ _FC_CHAR_NODE* Head,
-			_Out_ size_t* NewLength)
-	{
-		size_t total = 0;
-		for (_FC_CHAR_NODE* n = Head; n; n = n->Next)
-			total += n->Length;
-
-		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
-		if (!dest)
-			return NULL;
-
-		size_t pos = 0;
-		for (_FC_CHAR_NODE* n = Head; n; n = n->Next) {
-			memcpy(dest + pos, n->Payload, n->Length);
-			pos += n->Length;
-		}
-		dest[pos] = '\0';
-		*NewLength = pos;
-		return dest;
+		_FC_BufferFree(pLineBuffer);
 	}
 
 	// Wrapper matching original signature, using linked-list expansion
@@ -548,99 +484,52 @@ extern "C" {
 			_Out_ size_t* NewLength)
 	{
 		const size_t TabWidth = 4;
-		_FC_CHAR_NODE* list = _FC_BuildList(Source, SourceLength);
-		if (!list)
-			return NULL;
-		_FC_ExpandTabsInList(&list, TabWidth);
-		char* result = _FC_FlattenList(list, NewLength);
-		_FC_FreeList(list);
-		return result;
-	}
+		const char* spaces = "    ";
+		_FC_BUFFER buffer;
 
-	static inline FC_RESULT
-		_FC_ParseLines(
-			_In_reads_(BufferLength) const char* Buffer,
-			_In_ size_t BufferLength,
-			_Inout_ _FC_LINE_ARRAY* LineArray,
-			_In_ const FC_CONFIG* Config)
-	{
-		_FC_LineArrayInit(LineArray);
-		const char* Ptr = Buffer;
-		const char* End = Buffer + BufferLength;
+		// Initialize a buffer to hold characters.
+		_FC_BufferInit(&buffer, sizeof(char));
+		// Pre-allocating improves performance, though not strictly necessary.
+		// A safe upper bound is SourceLength * TabWidth.
+		_FC_BufferEnsureCapacity(&buffer, SourceLength * TabWidth);
 
-		while (Ptr < End)
+		for (size_t i = 0; i < SourceLength; ++i)
 		{
-			const char* Newline = Ptr;
-			while (Newline < End && *Newline != '\n' && *Newline != '\r')
+			if (Source[i] == '\t')
 			{
-				Newline++;
+				_FC_BufferAppendRange(&buffer, spaces, TabWidth);
 			}
-
-			size_t OriginalLength = (size_t)(Newline - Ptr);
-			char* LineText = _FC_StringDuplicateRange(Ptr, OriginalLength);
-			if (LineText == NULL)
+			else
 			{
-				_FC_LineArrayFree(LineArray);
-				return FC_ERROR_MEMORY;
+				_FC_BufferAppend(&buffer, &Source[i]);
 			}
-
-			size_t FinalLength = OriginalLength;
-			char* FinalText = LineText;
-
-			// Expand tabs if FC_RAW_TABS is not set
-			if (!(Config->Flags & FC_RAW_TABS))
-			{
-				char* Expanded = _FC_ExpandTabs(LineText, OriginalLength, &FinalLength);
-
-				if (Expanded == NULL)
-				{
-					_FC_LineArrayFree(LineArray);
-					return FC_ERROR_MEMORY;
-				}
-
-				HeapFree(GetProcessHeap(), 0, LineText);
-				FinalText = Expanded; // Always update FinalText!
-			}
-
-			UINT Hash = _FC_HashLine(FinalText, FinalLength, Config);
-			if (!_FC_LineArrayAppend(LineArray, FinalText, FinalLength, Hash))
-			{
-				HeapFree(GetProcessHeap(), 0, FinalText);
-				_FC_LineArrayFree(LineArray);
-				return FC_ERROR_MEMORY;
-			}
-
-			while (Newline < End && (*Newline == '\n' || *Newline == '\r'))
-			{
-				Newline++;
-			}
-			Ptr = Newline;
 		}
-		return FC_OK;
+
+		*NewLength = buffer.Count;
+		// The helper function null-terminates and returns the data pointer.
+		// The caller now owns the memory in buffer.pData.
+		return _FC_BufferToString(&buffer);
 	}
 
-	static inline FC_RESULT
+	static FC_RESULT
 		_FC_CompareLineArrays(
-			_In_ const _FC_LINE_ARRAY* ArrayA,
-			_In_ const _FC_LINE_ARRAY* ArrayB,
+			_In_ const _FC_BUFFER* pBufferA, // Changed type
+			_In_ const _FC_BUFFER* pBufferB, // Changed type
 			_In_ const FC_CONFIG* Config)
 	{
-		// First check: line count mismatch.
-		// Why: Different counts imply files differ in structure, no need to compare hashes.
-		if (ArrayA->Count != ArrayB->Count)
+		if (pBufferA->Count != pBufferB->Count)
 		{
 			if (Config->Output)
 				Config->Output(Config->UserData, "Files have different line counts", -1, -1);
 			return FC_DIFFERENT;
 		}
-
 		// Compare each line one by one.
 		// Why: Hash comparison is fast and covers most differences;
 		// fallback to byte-wise memcmp is used only if hashes match and case must be preserved.
-		for (size_t i = 0; i < ArrayA->Count; ++i)
+		for (size_t i = 0; i < pBufferA->Count; ++i)
 		{
-			const _FC_LINE* LineA = &ArrayA->Lines[i];
-			const _FC_LINE* LineB = &ArrayB->Lines[i];
+			const _FC_LINE* LineA = (_FC_LINE*)_FC_BufferGet(pBufferA, i);
+			const _FC_LINE* LineB = (_FC_LINE*)_FC_BufferGet(pBufferB, i);
 
 			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
@@ -693,6 +582,70 @@ extern "C" {
 		}
 
 		// All lines matched exactly or per hash+config — files are equal
+		return FC_OK;
+	}
+
+
+	static inline FC_RESULT
+		_FC_ParseLines(
+			_In_reads_(BufferLength) const char* Buffer,
+			_In_ size_t BufferLength,
+			_Inout_ _FC_BUFFER* pLineBuffer, // Changed from _FC_LINE_ARRAY*
+			_In_ const FC_CONFIG* Config)
+	{
+		// The function no longer initializes the buffer, the caller does.
+		const char* Ptr = Buffer;
+		const char* End = Buffer + BufferLength;
+
+		while (Ptr < End)
+		{
+			const char* Newline = Ptr;
+			while (Newline < End && *Newline != '\n' && *Newline != '\r')
+			{
+				Newline++;
+			}
+
+			size_t OriginalLength = (size_t)(Newline - Ptr);
+			char* LineText = _FC_StringDuplicateRange(Ptr, OriginalLength);
+			if (LineText == NULL)
+			{
+				// No buffer to free here yet, just return.
+				return FC_ERROR_MEMORY;
+			}
+
+			size_t FinalLength = OriginalLength;
+			char* FinalText = LineText;
+
+			if (!(Config->Flags & FC_RAW_TABS))
+			{
+				char* Expanded = _FC_ExpandTabs(LineText, OriginalLength, &FinalLength);
+				if (Expanded == NULL)
+				{
+					HeapFree(GetProcessHeap(), 0, LineText);
+					return FC_ERROR_MEMORY;
+				}
+				HeapFree(GetProcessHeap(), 0, LineText);
+				FinalText = Expanded;
+			}
+
+			_FC_LINE line;
+			line.Text = FinalText;
+			line.Length = FinalLength;
+			line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
+
+			if (!_FC_BufferAppend(pLineBuffer, &line))
+			{
+				HeapFree(GetProcessHeap(), 0, FinalText);
+				// The caller is responsible for freeing the partially filled buffer.
+				return FC_ERROR_MEMORY;
+			}
+
+			while (Newline < End && (*Newline == '\n' || *Newline == '\r'))
+			{
+				Newline++;
+			}
+			Ptr = Newline;
+		}
 		return FC_OK;
 	}
 
@@ -835,10 +788,11 @@ extern "C" {
 		size_t Length1 = 0, Length2 = 0;
 		char* Buffer1 = NULL;
 		char* Buffer2 = NULL;
-		_FC_LINE_ARRAY ArrayA, ArrayB;
+		_FC_BUFFER BufferA, BufferB;
 
-		_FC_LineArrayInit(&ArrayA);
-		_FC_LineArrayInit(&ArrayB);
+		// Initialize our generic buffers to hold _FC_LINE structs.
+		_FC_BufferInit(&BufferA, sizeof(_FC_LINE));
+		_FC_BufferInit(&BufferB, sizeof(_FC_LINE));
 
 		Buffer1 = _FC_ReadFileContents(Path1, &Length1, &Result);
 		if (!Buffer1) goto cleanup;
@@ -846,19 +800,20 @@ extern "C" {
 		Buffer2 = _FC_ReadFileContents(Path2, &Length2, &Result);
 		if (!Buffer2) goto cleanup;
 
-		Result = _FC_ParseLines(Buffer1, Length1, &ArrayA, Config);
+		Result = _FC_ParseLines(Buffer1, Length1, &BufferA, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FC_ParseLines(Buffer2, Length2, &ArrayB, Config);
+		Result = _FC_ParseLines(Buffer2, Length2, &BufferB, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FC_CompareLineArrays(&ArrayA, &ArrayB, Config);
+		Result = _FC_CompareLineArrays(&BufferA, &BufferB, Config);
 
 	cleanup:
 		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
 		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
-		_FC_LineArrayFree(&ArrayA);
-		_FC_LineArrayFree(&ArrayB);
+		// Free the buffers and their nested content.
+		_FC_FreeLineBufferContents(&BufferA);
+		_FC_FreeLineBufferContents(&BufferB);
 		return Result;
 	}
 
