@@ -676,8 +676,6 @@ extern "C" {
 			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
 			{
-				if (Config->Output)
-					Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
 				return FC_DIFFERENT;
 			}
 
@@ -701,8 +699,6 @@ extern "C" {
 						{
 							if (a[ia] != b[ib])
 							{
-								if (Config->Output)
-									Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
 								return FC_DIFFERENT;
 							}
 							++ia; ++ib;
@@ -713,8 +709,6 @@ extern "C" {
 					while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
 					if (ia != la || ib != lb)
 					{
-						if (Config->Output)
-							Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
 						return FC_DIFFERENT;
 					}
 				}
@@ -723,8 +717,6 @@ extern "C" {
 					if (LineA->Length != LineB->Length ||
 						RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
 					{
-						if (Config->Output)
-							Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
 						return FC_DIFFERENT;
 					}
 				}
