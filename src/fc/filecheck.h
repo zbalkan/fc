@@ -266,34 +266,6 @@ extern "C" {
 	}
 
 	static inline void
-		_FC_IntegerToHex(
-			size_t Value,
-			_Out_writes_z_(17) char* OutputBuffer)
-	{
-		static const char HexDigits[] = "0123456789abcdef";
-		char Temp[16];
-		int i = 0;
-
-		if (Value == 0)
-		{
-			OutputBuffer[0] = '0';
-			OutputBuffer[1] = '\0';
-			return;
-		}
-
-		while (Value && i < 16)
-		{
-			Temp[i++] = HexDigits[Value & 0xF];
-			Value >>= 4;
-		}
-
-		for (int j = 0; j < i; ++j)
-			OutputBuffer[j] = Temp[i - j - 1];
-
-		OutputBuffer[i] = '\0';
-	}
-
-	static inline void
 		_FC_LineArrayInit(
 			_Inout_ _FC_LINE_ARRAY* LineArray)
 	{
@@ -969,14 +941,13 @@ extern "C" {
 		if (Result == FC_DIFFERENT && Config->Output != NULL)
 		{
 			char Message[64] = "Binary diff at offset 0x";
-			char HexBuffer[17];
-			_FC_IntegerToHex(FirstDifference, HexBuffer);
-
-			char* Ptr = Message;
-			while (*Ptr) Ptr++;
-			char* Source = HexBuffer;
-			while (*Source) *Ptr++ = *Source++;
-			*Ptr = '\0';
+			_snprintf_s(
+				Message,
+				sizeof(Message),
+				_TRUNCATE, // Ensures the buffer is not overrun
+				"Binary diff at offset 0x%zx",
+				FirstDifference
+			);
 
 			Config->Output(Config->UserData, Message, -1, -1);
 		}
