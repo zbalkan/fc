@@ -40,21 +40,21 @@ extern "C" {
 	//
 	// Flags to modify comparison behavior.
 	//
-	#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
-	#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
-	#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
-	#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+#define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
+#define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
+#define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
+#define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
 
-	/**
-	 * @enum RTL_PATH_TYPE
-	 * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
-	 *
-	 * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
-	 * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
-	 * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
-	 *
-	 * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
-	 */
+/**
+ * @enum RTL_PATH_TYPE
+ * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
+ *
+ * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
+ * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
+ * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
+ *
+ * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
+ */
 	typedef enum _RTL_PATH_TYPE {
 		/**
 		 * The path type could not be determined. Typically indicates malformed or empty input.
@@ -99,29 +99,29 @@ extern "C" {
 
 	EXTERN_C_START
 
-	// External NTDLL APIs
-	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
-	NTSYSAPI BOOLEAN NTAPI RtlDosPathNameToRelativeNtPathName_U_WithStatus(
-		_In_ PCWSTR DosName,
-		_Out_ PUNICODE_STRING NtName,
-		_Out_opt_ PWSTR* FilePart,
-		_Out_opt_ PVOID RelativeName);
-
+		// External NTDLL APIs
+		NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
+	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
+		__in PCWSTR DosFileName,
+		__out PUNICODE_STRING NtFileName,
+		__deref_opt_out_opt PWSTR* FilePart,
+		__reserved PVOID Reserved
+	);
 	EXTERN_C_END
 
-	/**
-	 * @brief Callback function for reporting comparison differences.
-	 *
-	 * @param UserData  User-defined data passed from the FC_CONFIG struct.
-	 * @param Message   A UTF-8 encoded string describing the difference.
-	 * @param Line1     The line number in the first file, or -1 if not applicable.
-	 * @param Line2     The line number in the second file, or -1 if not applicable.
-	 */
-	typedef void (*FC_OUTPUT_CALLBACK)(
-		_In_opt_ void* UserData,
-		_In_z_ const char* Message,
-		_In_ int Line1,
-		_In_ int Line2);
+		/**
+		 * @brief Callback function for reporting comparison differences.
+		 *
+		 * @param UserData  User-defined data passed from the FC_CONFIG struct.
+		 * @param Message   A UTF-8 encoded string describing the difference.
+		 * @param Line1     The line number in the first file, or -1 if not applicable.
+		 * @param Line2     The line number in the second file, or -1 if not applicable.
+		 */
+		typedef void (*FC_OUTPUT_CALLBACK)(
+			_In_opt_ void* UserData,
+			_In_z_ const char* Message,
+			_In_ int Line1,
+			_In_ int Line2);
 
 	//
 	// Configuration structure for a file comparison operation.
@@ -399,16 +399,25 @@ extern "C" {
 		if (LineArray->Count + 1 > LineArray->Capacity)
 		{
 			size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-			FC_LINE* Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(),
-				0,
-				LineArray->Lines,
-				NewCapacity * sizeof(FC_LINE));
-			if (Temp == NULL)
+			if (LineArray->Count + 1 > LineArray->Capacity)
 			{
-				return FALSE;
+				size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
+				FC_LINE* Temp = NULL;
+				if (LineArray->Lines == NULL)
+				{
+					Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
+				}
+				else
+				{
+					Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
+				}
+				if (Temp == NULL)
+				{
+					return FALSE;
+				}
+				LineArray->Lines = Temp;
+				LineArray->Capacity = NewCapacity;
 			}
-			LineArray->Lines = Temp;
-			LineArray->Capacity = NewCapacity;
 		}
 		LineArray->Lines[LineArray->Count].Text = Text;
 		LineArray->Lines[LineArray->Count].Length = Length;
@@ -417,66 +426,168 @@ extern "C" {
 		return TRUE;
 	}
 
-	//
-	// Helper function to expand tabs to spaces.
-	// Returns a new, heap-allocated string. The caller must free it.
-	//
+	// Linked-list node holding a chunk of characters
+	typedef struct _FileCheckCharNode {
+		char* data;
+		size_t length;
+		struct _FileCheckCharNode* next;
+	} _FileCheckCharNode;
+
+	// Create a new node with a copy of the given data
+	static _FileCheckCharNode*
+		_FileCheckCreateNode(
+			_In_reads_(length) const char* data,
+			_In_ size_t length)
+	{
+		_FileCheckCharNode* node = (_FileCheckCharNode*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FileCheckCharNode));
+		if (!node)
+			return NULL;
+		node->data = (char*)HeapAlloc(GetProcessHeap(), 0, length + 1);
+		if (!node->data) {
+			HeapFree(GetProcessHeap(), 0, node);
+			return NULL;
+		}
+		memcpy(node->data, data, length);
+		node->data[length] = '\0';
+		node->length = length;
+		node->next = NULL;
+		return node;
+	}
+
+	// Free the entire linked list
+	static void
+		_FileCheckFreeList(
+			_In_opt_ _FileCheckCharNode* head)
+	{
+		while (head) {
+			_FileCheckCharNode* next = head->next;
+			HeapFree(GetProcessHeap(), 0, head->data);
+			HeapFree(GetProcessHeap(), 0, head);
+			head = next;
+		}
+	}
+
+	// Build a linked list from the source string, splitting at tabs
+	static _FileCheckCharNode*
+		_FileCheckBuildList(
+			_In_reads_(srcLen) const char* src,
+			_In_ size_t srcLen)
+	{
+		_FileCheckCharNode* head = NULL;
+		_FileCheckCharNode* tail = NULL;
+		size_t i = 0;
+
+		while (i < srcLen) {
+			if (src[i] == '\t') {
+				_FileCheckCharNode* node = _FileCheckCreateNode("\t", 1);
+				if (!node) { _FileCheckFreeList(head); return NULL; }
+				if (!head)
+					head = tail = node;
+				else {
+					tail->next = node;
+					tail = node;
+				}
+				i++;
+			}
+			else {
+				size_t start = i;
+				while (i < srcLen && src[i] != '\t')
+					++i;
+				size_t len = i - start;
+				_FileCheckCharNode* node = _FileCheckCreateNode(src + start, len);
+				if (!node) { _FileCheckFreeList(head); return NULL; }
+				if (!head)
+					head = tail = node;
+				else {
+					tail->next = node;
+					tail = node;
+				}
+			}
+		}
+		return head;
+	}
+
+	// Replace each tab node with a node containing TabWidth spaces
+	static void
+		_FileCheckExpandTabsInList(
+			_Inout_ _FileCheckCharNode** headPtr,
+			_In_ size_t TabWidth)
+	{
+		_FileCheckCharNode* prev = NULL;
+		_FileCheckCharNode* curr = *headPtr;
+
+		while (curr) {
+			if (curr->length == 1 && curr->data[0] == '\t') {
+				// Allocate space buffer
+				char* spaces = (char*)HeapAlloc(GetProcessHeap(), 0, TabWidth + 1);
+				if (!spaces)
+					return;
+				memset(spaces, ' ', TabWidth);
+				spaces[TabWidth] = '\0';
+
+				_FileCheckCharNode* spaceNode = _FileCheckCreateNode(spaces, TabWidth);
+				HeapFree(GetProcessHeap(), 0, spaces);
+				if (!spaceNode)
+					return;
+
+				// Splice in the new node
+				spaceNode->next = curr->next;
+				if (prev)
+					prev->next = spaceNode;
+				else
+					*headPtr = spaceNode;
+
+				// Free the old tab node
+				HeapFree(GetProcessHeap(), 0, curr->data);
+				HeapFree(GetProcessHeap(), 0, curr);
+				curr = spaceNode;
+			}
+			prev = curr;
+			curr = curr->next;
+		}
+	}
+
+	// Flatten the linked list back into a single string
+	static char*
+		_FileCheckFlattenList(
+			_In_ _FileCheckCharNode* head,
+			_Out_ size_t* newLength)
+	{
+		size_t total = 0;
+		for (_FileCheckCharNode* n = head; n; n = n->next)
+			total += n->length;
+
+		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
+		if (!dest)
+			return NULL;
+
+		size_t pos = 0;
+		for (_FileCheckCharNode* n = head; n; n = n->next) {
+			memcpy(dest + pos, n->data, n->length);
+			pos += n->length;
+		}
+		dest[pos] = '\0';
+		*newLength = pos;
+		return dest;
+	}
+
+	// Wrapper matching original signature, using linked-list expansion
 	static inline char*
 		_FileCheckExpandTabs(
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
 	{
-		*NewLength = 0;
-		const int TabWidth = 4;
-
-		BOOL HasTabs = FALSE;
-		size_t ExpandedLength = 0;
-
-		for (size_t i = 0; i < SourceLength; ++i)
-		{
-			if (Source[i] == '\t')
-			{
-				HasTabs = TRUE;
-				ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
-			}
-			else
-			{
-				ExpandedLength++;
-			}
-		}
-
-		if (!HasTabs)
-		{
-			*NewLength = SourceLength;
-			return (char*)Source; // Return input directly – caller must not free it
-		}
-
-		char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
-		if (Dest == NULL)
+		const size_t TabWidth = 4;
+		_FileCheckCharNode* list = _FileCheckBuildList(Source, SourceLength);
+		if (!list)
 			return NULL;
-
-		size_t DestIndex = 0;
-		for (size_t i = 0; i < SourceLength; ++i)
-		{
-			if (Source[i] == '\t')
-			{
-				size_t SpacesToAdd = TabWidth - (DestIndex % TabWidth);
-				for (size_t s = 0; s < SpacesToAdd; ++s)
-				{
-					Dest[DestIndex++] = ' ';
-				}
-			}
-			else
-			{
-				Dest[DestIndex++] = Source[i];
-			}
-		}
-		Dest[DestIndex] = '\0';
-		*NewLength = DestIndex;
-		return Dest;
+		_FileCheckExpandTabsInList(&list, TabWidth);
+		char* result = _FileCheckFlattenList(list, NewLength);
+		_FileCheckFreeList(list);
+		return result;
 	}
-
+    
 	static inline FC_RESULT
 		_FileCheckParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
@@ -518,8 +629,8 @@ extern "C" {
 					return FC_ERROR_MEMORY;
 				}
 
-				if (Expanded != LineText)
-					HeapFree(GetProcessHeap(), 0, LineText); // Free the original line
+				HeapFree(GetProcessHeap(), 0, LineText);
+				FinalText = Expanded; // Always update FinalText!
 			}
 
 			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Config);
@@ -565,8 +676,6 @@ extern "C" {
 			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
 			{
-				if (Config->Output)
-					Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
 				return FC_DIFFERENT;
 			}
 
@@ -575,12 +684,41 @@ extern "C" {
 			if (!(Config->Flags & FC_IGNORE_CASE))
 			{
 				// Fallback exact match check
-				if (LineA->Length != LineB->Length ||
-					RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+				// If FC_IGNORE_WS is set, skip whitespace in comparison
+				if (Config->Flags & FC_IGNORE_WS)
 				{
-					if (Config->Output)
-						Config->Output(Config->UserData, "Line differs", (int)(i + 1), (int)(i + 1));
-					return FC_DIFFERENT;
+					const char* a = LineA->Text;
+					const char* b = LineB->Text;
+					size_t la = LineA->Length, lb = LineB->Length;
+					size_t ia = 0, ib = 0;
+					while (ia < la && ib < lb)
+					{
+						while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
+						while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
+						if (ia < la && ib < lb)
+						{
+							if (a[ia] != b[ib])
+							{
+								return FC_DIFFERENT;
+							}
+							++ia; ++ib;
+						}
+					}
+					// Skip trailing whitespace
+					while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
+					while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
+					if (ia != la || ib != lb)
+					{
+						return FC_DIFFERENT;
+					}
+				}
+				else
+				{
+					if (LineA->Length != LineB->Length ||
+						RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
+					{
+						return FC_DIFFERENT;
+					}
 				}
 			}
 		}
@@ -611,7 +749,22 @@ extern "C" {
 			return NULL;
 
 		LARGE_INTEGER FileSize;
-		if (!GetFileSizeEx(FileHandle, &FileSize) || FileSize.QuadPart > (LONGLONG)-1)
+		BOOL SizeSuccess = GetFileSizeEx(FileHandle, &FileSize);
+		if (!SizeSuccess) {
+			DWORD Err = GetLastError();
+			CloseHandle(FileHandle);
+			if (Err == ERROR_FILE_NOT_FOUND || Err == ERROR_PATH_NOT_FOUND)
+			{
+				*Result = FC_ERROR_INVALID_PARAM; // File not found
+			}
+			else
+			{
+				*Result = FC_ERROR_IO; // Other IO error
+			}
+			return NULL;
+		}
+
+		if (FileSize.QuadPart > (ULONGLONG)SIZE_MAX)
 		{
 			CloseHandle(FileHandle);
 			return NULL;
@@ -678,7 +831,6 @@ extern "C" {
 		double ratio = (double)printable / length;
 		return (ratio >= textThreshold);
 	}
-
 
 	static inline BOOL
 		IsProbablyTextFileW(const WCHAR* filepath) {
@@ -861,9 +1013,36 @@ extern "C" {
 		}
 
 		// Step 2: Convert to full NT path via native call
-		UNICODE_STRING NtPath;
-		if (!RtlDosPathNameToRelativeNtPathName_U_WithStatus(InputPath, &NtPath, NULL, NULL))
+		// TODO: Check if the path is already in NT format, if not, convert it
+		// Note: RtlDosPathNameToRelativeNtPathName_U_WithStatus returns a relative NT path,
+		// but we can use it to validate and canonicalize the input.
+		// It will also handle long paths correctly.
+		// Sample input: "C:\path\to\file.txt" or "\\?\C:\path\to\file.txt"
+		// Sample output: "\??\C:\path\to\file.txt" or "\Device\HarddiskVolume1\path\to\file.txt"
+		// Check PathType variable's value to ensure we handle it correctly.
+		if (PathType == RtlPathTypeUncAbsolute ||
+			PathType == RtlPathTypeDriveAbsolute ||
+			PathType == RtlPathTypeDriveRelative ||
+			PathType == RtlPathTypeRooted ||
+			PathType == RtlPathTypeRelative)
 		{
+			// These are acceptable, proceed to conversion
+		}
+		else
+		{
+			return FALSE; // reject other types like UNC relative, etc.
+		}
+
+		UNICODE_STRING NtPath;
+		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
+			InputPath,
+			&NtPath,
+			NULL, // FilePart not needed
+			NULL); // Reserved
+
+		if (!NT_SUCCESS(Status))
+		{
+			RtlFreeUnicodeString(&NtPath);
 			return FALSE;
 		}
 
@@ -1012,23 +1191,23 @@ extern "C" {
 
 		switch (Config->Mode)
 		{
-			case FC_MODE_TEXT_ASCII:
-			case FC_MODE_TEXT_UNICODE:
+		case FC_MODE_TEXT_ASCII:
+		case FC_MODE_TEXT_UNICODE:
+			Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
+			break;
+		case FC_MODE_BINARY:
+			Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+			break;
+		case FC_MODE_AUTO:
+		default: {
+			BOOL isText1 = IsProbablyTextFileW(Path1);
+			BOOL isText2 = IsProbablyTextFileW(Path2);
+			if (isText1 && isText2)
 				Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			case FC_MODE_BINARY:
+			else
 				Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			case FC_MODE_AUTO:
-			default: {
-				BOOL isText1 = IsProbablyTextFileW(Path1);
-				BOOL isText2 = IsProbablyTextFileW(Path2);
-				if (isText1 && isText2)
-					Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-				else
-					Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-				break;
-			}
+			break;
+		}
 		}
 
 		HeapFree(GetProcessHeap(), 0, CanonicalPath1);
