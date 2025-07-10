@@ -174,7 +174,7 @@ wmain(
 	const WCHAR* File2 = argv[argc - 1];
 
 	// Call the wide-character version of the comparison function for best performance
-	FC_RESULT Result = FileCheckCompareFilesW(File1, File2, &Config);
+	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
 	switch (Result)
 	{

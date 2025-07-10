@@ -102,7 +102,7 @@ static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Line1\nLine2\n"); WRITE_STR_FILE(p2, "Line1\nLine2\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 
 static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
@@ -114,7 +114,7 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 	WRITE_STR_FILE(p2, "LineX\nLineY\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 {
@@ -126,7 +126,7 @@ static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = 0;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 {
@@ -138,7 +138,7 @@ static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = FC_IGNORE_CASE;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 {
@@ -150,7 +150,7 @@ static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = 0;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 {
@@ -162,7 +162,7 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = 0;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_Tabs_Expanded(const WCHAR* baseDir)
 {
@@ -174,7 +174,7 @@ static void Test_Tabs_Expanded(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = 0;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_Tabs_Raw(const WCHAR* baseDir)
 {
@@ -186,7 +186,7 @@ static void Test_Tabs_Raw(const WCHAR* baseDir)
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
 	cfg.Flags = FC_RAW_TABS;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 
 static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
@@ -201,7 +201,7 @@ static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 {
@@ -215,7 +215,7 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, b, (DWORD)strlen(b))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 {
@@ -227,7 +227,7 @@ static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, content, (DWORD)strlen(content))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 {
@@ -246,7 +246,7 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	WRITE_STR_FILE(p2, text);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_BinaryExactMatch(const WCHAR* baseDir)
 {
@@ -258,7 +258,7 @@ static void Test_BinaryExactMatch(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, data, sizeof(data))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 }
 static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 {
@@ -271,7 +271,7 @@ static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_BinarySizeDiff(const WCHAR* baseDir)
 {
@@ -284,7 +284,7 @@ static void Test_BinarySizeDiff(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	if (FileCheckCompareFilesUtf8(u1, u2, &cfg) != FC_DIFFERENT)
+	if (FC_CompareFilesUtf8(u1, u2, &cfg) != FC_DIFFERENT)
 		Throw(L"Binary size diff failed", NULL);
 }
 static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
@@ -299,7 +299,7 @@ static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 {
@@ -313,7 +313,7 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 {
@@ -329,7 +329,7 @@ static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 	CloseHandle(h);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
 	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 }
 static void Test_UTF8WrapperValidPath(const WCHAR* baseDir)
 {
@@ -343,7 +343,7 @@ static void Test_UTF8WrapperValidPath(const WCHAR* baseDir)
     FC_CONFIG cfg = {0};
     cfg.Output = TestCallback;
     cfg.Mode = FC_MODE_TEXT_ASCII;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(pUtf8, pUtf8, &cfg) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(pUtf8, pUtf8, &cfg) == FC_OK);
 }
 static void Test_UTF8WrapperInvalidPath(const WCHAR* baseDir)
 {
@@ -351,19 +351,19 @@ static void Test_UTF8WrapperInvalidPath(const WCHAR* baseDir)
     FC_CONFIG cfg = {0};
 	cfg.Output = TestCallback;
 	cfg.Mode = FC_MODE_TEXT_ASCII;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(bad, bad, &cfg) == FC_ERROR_INVALID_PARAM);
+	ASSERT_TRUE(FC_CompareFilesUtf8(bad, bad, &cfg) == FC_ERROR_INVALID_PARAM);
 }
 static void Test_ErrorNullPathPointer(const WCHAR* baseDir)
 {
 	FC_CONFIG cfg = { 0 };
 	cfg.Output = TestCallback;
 	cfg.Mode = FC_MODE_TEXT_ASCII;
-	ASSERT_TRUE(FileCheckCompareFilesUtf8("", NULL, &cfg) == FC_ERROR_INVALID_PARAM);
+	ASSERT_TRUE(FC_CompareFilesUtf8("", NULL, &cfg) == FC_ERROR_INVALID_PARAM);
 }
 static void Test_ErrorNullConfigPointer(const WCHAR* baseDir)
 {
 	const char* utf = "X\n";
-	ASSERT_TRUE(FileCheckCompareFilesUtf8(utf, utf, NULL) == FC_ERROR_INVALID_PARAM);
+	ASSERT_TRUE(FC_CompareFilesUtf8(utf, utf, NULL) == FC_ERROR_INVALID_PARAM);
 }
 
 int wmain(void)

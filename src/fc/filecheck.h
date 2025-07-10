@@ -97,31 +97,28 @@ extern "C" {
 		RtlPathTypeRootLocalDevice
 	} RTL_PATH_TYPE;
 
-	EXTERN_C_START
-
-		// External NTDLL APIs
-		NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
+	// External NTDLL APIs
+	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
 	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
 		__in PCWSTR DosFileName,
 		__out PUNICODE_STRING NtFileName,
 		__deref_opt_out_opt PWSTR* FilePart,
 		__reserved PVOID Reserved
 	);
-	EXTERN_C_END
 
-		/**
-		 * @brief Callback function for reporting comparison differences.
-		 *
-		 * @param UserData  User-defined data passed from the FC_CONFIG struct.
-		 * @param Message   A UTF-8 encoded string describing the difference.
-		 * @param Line1     The line number in the first file, or -1 if not applicable.
-		 * @param Line2     The line number in the second file, or -1 if not applicable.
-		 */
-		typedef void (*FC_OUTPUT_CALLBACK)(
-			_In_opt_ void* UserData,
-			_In_z_ const char* Message,
-			_In_ int Line1,
-			_In_ int Line2);
+	/**
+	 * @brief Callback function for reporting comparison differences.
+	 *
+	 * @param UserData  User-defined data passed from the FC_CONFIG struct.
+	 * @param Message   A UTF-8 encoded string describing the difference.
+	 * @param Line1     The line number in the first file, or -1 if not applicable.
+	 * @param Line2     The line number in the second file, or -1 if not applicable.
+	 */
+	typedef void (*FC_OUTPUT_CALLBACK)(
+		_In_opt_ void* UserData,
+		_In_z_ const char* Message,
+		_In_ int Line1,
+		_In_ int Line2);
 
 	//
 	// Configuration structure for a file comparison operation.
@@ -150,7 +147,7 @@ extern "C" {
 	 * @return An FC_RESULT code indicating the outcome of the comparison.
 	 */
 	FC_RESULT
-		FileCheckCompareFilesW(
+		FC_CompareFilesW(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config);
@@ -167,7 +164,7 @@ extern "C" {
 	 * @return An FC_RESULT code indicating the outcome of the comparison.
 	 */
 	FC_RESULT
-		FileCheckCompareFilesUtf8(
+		FC_CompareFilesUtf8(
 			_In_z_ const char* Path1Utf8,
 			_In_z_ const char* Path2Utf8,
 			_In_ const FC_CONFIG* Config);
@@ -176,22 +173,22 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
-	typedef struct _FC_LINE
+	typedef struct
 	{
 		char* Text;
 		size_t Length;
 		UINT Hash;
-	} FC_LINE;
+	} _FC_LINE;
 
-	typedef struct _FC_LINE_ARRAY
+	typedef struct
 	{
-		FC_LINE* Lines;
+		_FC_LINE* Lines;
 		size_t Count;
 		size_t Capacity;
-	} FC_LINE_ARRAY;
+	} _FC_LINE_ARRAY;
 
 	static inline unsigned char
-		_FileCheckToLowerAscii(
+		_FC_ToLowerAscii(
 			unsigned char Character)
 	{
 		if (Character >= 'A' && Character <= 'Z')
@@ -202,7 +199,7 @@ extern "C" {
 	}
 
 	static inline char*
-		_FileCheckStringDuplicateRange(
+		_FC_StringDuplicateRange(
 			_In_reads_(Length) const char* String,
 			_In_ size_t Length)
 	{
@@ -221,7 +218,7 @@ extern "C" {
 	// Returns a new, heap-allocated lowercase string. The caller must free it.
 	//
 	static inline char*
-		_FileCheckStringToLowerUnicode(
+		_FC_StringToLowerUnicode(
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
@@ -229,7 +226,7 @@ extern "C" {
 		*NewLength = 0;
 		if (SourceLength == 0)
 		{
-			return _FileCheckStringDuplicateRange("", 0);
+			return _FC_StringDuplicateRange("", 0);
 		}
 
 		// Convert source UTF-8 to a temporary UTF-16 buffer
@@ -269,7 +266,7 @@ extern "C" {
 	}
 
 	static inline void
-		_FileCheckIntegerToHex(
+		_FC_IntegerToHex(
 			size_t Value,
 			_Out_writes_z_(17) char* OutputBuffer)
 	{
@@ -297,8 +294,8 @@ extern "C" {
 	}
 
 	static inline void
-		_FileCheckLineArrayInit(
-			_Inout_ FC_LINE_ARRAY* LineArray)
+		_FC_LineArrayInit(
+			_Inout_ _FC_LINE_ARRAY* LineArray)
 	{
 		LineArray->Lines = NULL;
 		LineArray->Count = 0;
@@ -306,8 +303,8 @@ extern "C" {
 	}
 
 	static inline void
-		_FileCheckLineArrayFree(
-			_Inout_ FC_LINE_ARRAY* LineArray)
+		_FC_LineArrayFree(
+			_Inout_ _FC_LINE_ARRAY* LineArray)
 	{
 		if (LineArray->Lines != NULL)
 		{
@@ -326,7 +323,7 @@ extern "C" {
 	}
 
 	static inline UINT
-		_FileCheckComputeHash(
+		_FC_ComputeHash(
 			_In_reads_(Length) const char* String,
 			_In_ size_t Length,
 			_In_ UINT Flags)
@@ -343,7 +340,7 @@ extern "C" {
 	}
 
 	static inline UINT
-		_FileCheckHashLine(
+		_FC_HashLine(
 			_In_reads_(Length) const char* String,
 			_In_ size_t Length,
 			_In_ const FC_CONFIG* Config)
@@ -354,10 +351,10 @@ extern "C" {
 		if ((Flags & FC_IGNORE_CASE) && Config->Mode == FC_MODE_TEXT_UNICODE)
 		{
 			size_t LowerLength;
-			char* LowerString = _FileCheckStringToLowerUnicode(String, Length, &LowerLength);
+			char* LowerString = _FC_StringToLowerUnicode(String, Length, &LowerLength);
 			if (LowerString == NULL)
 				return 0; // Fail-safe; hashing 0 for NULL is safe for comparison fallback
-			UINT Hash = _FileCheckComputeHash(LowerString, LowerLength, Flags);
+			UINT Hash = _FC_ComputeHash(LowerString, LowerLength, Flags);
 			HeapFree(GetProcessHeap(), 0, LowerString);
 			return Hash;
 		}
@@ -375,13 +372,13 @@ extern "C" {
 
 			for (size_t i = 0; i < Length; ++i)
 			{
-				Temp[i] = (char)_FileCheckToLowerAscii((unsigned char)String[i]);
+				Temp[i] = (char)_FC_ToLowerAscii((unsigned char)String[i]);
 			}
 			Temp[Length] = '\0';
 			Input = Temp;
 		}
 
-		UINT Hash = _FileCheckComputeHash(Input, InputLen, Flags);
+		UINT Hash = _FC_ComputeHash(Input, InputLen, Flags);
 
 		if (Temp)
 			HeapFree(GetProcessHeap(), 0, Temp);
@@ -390,9 +387,9 @@ extern "C" {
 	}
 
 	static inline BOOL
-		_FileCheckLineArrayAppend(
-			_Inout_ FC_LINE_ARRAY* LineArray,
-			_In_ _Post_invalid_ char* Text, // Text ownership is transferred
+		_FC_LineArrayAppend(
+			_Inout_ _FC_LINE_ARRAY* LineArray,
+			_In_ _Post_invalid_ char* Text,
 			_In_ size_t Length,
 			_In_ UINT Hash)
 	{
@@ -402,14 +399,14 @@ extern "C" {
 			if (LineArray->Count + 1 > LineArray->Capacity)
 			{
 				size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-				FC_LINE* Temp = NULL;
+				_FC_LINE* Temp = NULL;
 				if (LineArray->Lines == NULL)
 				{
-					Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
+					Temp = (_FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(_FC_LINE));
 				}
 				else
 				{
-					Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
+					Temp = (_FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(_FC_LINE));
 				}
 				if (Temp == NULL)
 				{
@@ -427,79 +424,79 @@ extern "C" {
 	}
 
 	// Linked-list node holding a chunk of characters
-	typedef struct _FileCheckCharNode {
-		char* data;
-		size_t length;
-		struct _FileCheckCharNode* next;
-	} _FileCheckCharNode;
+	typedef struct _FC_CHAR_NODE_STRUCT {
+		char* Payload;
+		size_t Length;
+		struct _FC_CHAR_NODE_STRUCT* Next;
+	} _FC_CHAR_NODE;
 
 	// Create a new node with a copy of the given data
-	static _FileCheckCharNode*
-		_FileCheckCreateNode(
-			_In_reads_(length) const char* data,
-			_In_ size_t length)
+	static _FC_CHAR_NODE*
+		_FC_CreateNode(
+			_In_reads_(length) const char* Payload,
+			_In_ size_t Length)
 	{
-		_FileCheckCharNode* node = (_FileCheckCharNode*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FileCheckCharNode));
+		_FC_CHAR_NODE* node = (_FC_CHAR_NODE*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FC_CHAR_NODE));
 		if (!node)
 			return NULL;
-		node->data = (char*)HeapAlloc(GetProcessHeap(), 0, length + 1);
-		if (!node->data) {
+		node->Payload = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+		if (!node->Payload) {
 			HeapFree(GetProcessHeap(), 0, node);
 			return NULL;
 		}
-		memcpy(node->data, data, length);
-		node->data[length] = '\0';
-		node->length = length;
-		node->next = NULL;
+		memcpy(node->Payload, Payload, Length);
+		node->Payload[Length] = '\0';
+		node->Length = Length;
+		node->Next = NULL;
 		return node;
 	}
 
 	// Free the entire linked list
 	static void
-		_FileCheckFreeList(
-			_In_opt_ _FileCheckCharNode* head)
+		_FC_FreeList(
+			_In_opt_ _FC_CHAR_NODE* Head)
 	{
-		while (head) {
-			_FileCheckCharNode* next = head->next;
-			HeapFree(GetProcessHeap(), 0, head->data);
-			HeapFree(GetProcessHeap(), 0, head);
-			head = next;
+		while (Head) {
+			_FC_CHAR_NODE* next = Head->Next;
+			HeapFree(GetProcessHeap(), 0, Head->Payload);
+			HeapFree(GetProcessHeap(), 0, Head);
+			Head = next;
 		}
 	}
 
 	// Build a linked list from the source string, splitting at tabs
-	static _FileCheckCharNode*
-		_FileCheckBuildList(
-			_In_reads_(srcLen) const char* src,
-			_In_ size_t srcLen)
+	static _FC_CHAR_NODE*
+		_FC_BuildList(
+			_In_reads_(SourceLength) const char* Source,
+			_In_ size_t SourceLength)
 	{
-		_FileCheckCharNode* head = NULL;
-		_FileCheckCharNode* tail = NULL;
+		_FC_CHAR_NODE* head = NULL;
+		_FC_CHAR_NODE* tail = NULL;
 		size_t i = 0;
 
-		while (i < srcLen) {
-			if (src[i] == '\t') {
-				_FileCheckCharNode* node = _FileCheckCreateNode("\t", 1);
-				if (!node) { _FileCheckFreeList(head); return NULL; }
+		while (i < SourceLength) {
+			if (Source[i] == '\t') {
+				_FC_CHAR_NODE* node = _FC_CreateNode("\t", 1);
+				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
 				else {
-					tail->next = node;
+					tail->Next = node;
 					tail = node;
 				}
 				i++;
 			}
 			else {
 				size_t start = i;
-				while (i < srcLen && src[i] != '\t')
+				while (i < SourceLength && Source[i] != '\t')
 					++i;
 				size_t len = i - start;
-				_FileCheckCharNode* node = _FileCheckCreateNode(src + start, len);
-				if (!node) { _FileCheckFreeList(head); return NULL; }
+				_FC_CHAR_NODE* node = _FC_CreateNode(Source + start, len);
+				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
 				else {
-					tail->next = node;
+					tail->Next = node;
 					tail = node;
 				}
 			}
@@ -509,15 +506,15 @@ extern "C" {
 
 	// Replace each tab node with a node containing TabWidth spaces
 	static void
-		_FileCheckExpandTabsInList(
-			_Inout_ _FileCheckCharNode** headPtr,
+		_FC_ExpandTabsInList(
+			_Inout_ _FC_CHAR_NODE** HeadPtr,
 			_In_ size_t TabWidth)
 	{
-		_FileCheckCharNode* prev = NULL;
-		_FileCheckCharNode* curr = *headPtr;
+		_FC_CHAR_NODE* prev = NULL;
+		_FC_CHAR_NODE* curr = *HeadPtr;
 
 		while (curr) {
-			if (curr->length == 1 && curr->data[0] == '\t') {
+			if (curr->Length == 1 && curr->Payload[0] == '\t') {
 				// Allocate space buffer
 				char* spaces = (char*)HeapAlloc(GetProcessHeap(), 0, TabWidth + 1);
 				if (!spaces)
@@ -525,77 +522,77 @@ extern "C" {
 				memset(spaces, ' ', TabWidth);
 				spaces[TabWidth] = '\0';
 
-				_FileCheckCharNode* spaceNode = _FileCheckCreateNode(spaces, TabWidth);
+				_FC_CHAR_NODE* spaceNode = _FC_CreateNode(spaces, TabWidth);
 				HeapFree(GetProcessHeap(), 0, spaces);
 				if (!spaceNode)
 					return;
 
 				// Splice in the new node
-				spaceNode->next = curr->next;
+				spaceNode->Next = curr->Next;
 				if (prev)
-					prev->next = spaceNode;
+					prev->Next = spaceNode;
 				else
-					*headPtr = spaceNode;
+					*HeadPtr = spaceNode;
 
 				// Free the old tab node
-				HeapFree(GetProcessHeap(), 0, curr->data);
+				HeapFree(GetProcessHeap(), 0, curr->Payload);
 				HeapFree(GetProcessHeap(), 0, curr);
 				curr = spaceNode;
 			}
 			prev = curr;
-			curr = curr->next;
+			curr = curr->Next;
 		}
 	}
 
 	// Flatten the linked list back into a single string
 	static char*
-		_FileCheckFlattenList(
-			_In_ _FileCheckCharNode* head,
-			_Out_ size_t* newLength)
+		_FC_FlattenList(
+			_In_ _FC_CHAR_NODE* Head,
+			_Out_ size_t* NewLength)
 	{
 		size_t total = 0;
-		for (_FileCheckCharNode* n = head; n; n = n->next)
-			total += n->length;
+		for (_FC_CHAR_NODE* n = Head; n; n = n->Next)
+			total += n->Length;
 
 		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
 		if (!dest)
 			return NULL;
 
 		size_t pos = 0;
-		for (_FileCheckCharNode* n = head; n; n = n->next) {
-			memcpy(dest + pos, n->data, n->length);
-			pos += n->length;
+		for (_FC_CHAR_NODE* n = Head; n; n = n->Next) {
+			memcpy(dest + pos, n->Payload, n->Length);
+			pos += n->Length;
 		}
 		dest[pos] = '\0';
-		*newLength = pos;
+		*NewLength = pos;
 		return dest;
 	}
 
 	// Wrapper matching original signature, using linked-list expansion
 	static inline char*
-		_FileCheckExpandTabs(
+		_FC_ExpandTabs(
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
 	{
 		const size_t TabWidth = 4;
-		_FileCheckCharNode* list = _FileCheckBuildList(Source, SourceLength);
+		_FC_CHAR_NODE* list = _FC_BuildList(Source, SourceLength);
 		if (!list)
 			return NULL;
-		_FileCheckExpandTabsInList(&list, TabWidth);
-		char* result = _FileCheckFlattenList(list, NewLength);
-		_FileCheckFreeList(list);
+		_FC_ExpandTabsInList(&list, TabWidth);
+		char* result = _FC_CheckFlattenList(list, NewLength);
+		_FC_FreeList(list);
 		return result;
 	}
-    
+
 	static inline FC_RESULT
-		_FileCheckParseLines(
+		_FC_ParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
 			_In_ size_t BufferLength,
-			_Inout_ FC_LINE_ARRAY* LineArray,
+			_Inout_ _FC_LINE_ARRAY* LineArray,
 			_In_ const FC_CONFIG* Config)
 	{
-		_FileCheckLineArrayInit(LineArray);
+		_FC_LineArrayInit(LineArray);
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
 
@@ -608,10 +605,10 @@ extern "C" {
 			}
 
 			size_t OriginalLength = (size_t)(Newline - Ptr);
-			char* LineText = _FileCheckStringDuplicateRange(Ptr, OriginalLength);
+			char* LineText = _FC_StringDuplicateRange(Ptr, OriginalLength);
 			if (LineText == NULL)
 			{
-				_FileCheckLineArrayFree(LineArray);
+				_FC_LineArrayFree(LineArray);
 				return FC_ERROR_MEMORY;
 			}
 
@@ -621,11 +618,11 @@ extern "C" {
 			// Expand tabs if FC_RAW_TABS is not set
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
-				char* Expanded = _FileCheckExpandTabs(LineText, OriginalLength, &FinalLength);
+				char* Expanded = _FC_ExpandTabs(LineText, OriginalLength, &FinalLength);
 
 				if (Expanded == NULL)
 				{
-					_FileCheckLineArrayFree(LineArray);
+					_FC_LineArrayFree(LineArray);
 					return FC_ERROR_MEMORY;
 				}
 
@@ -633,11 +630,11 @@ extern "C" {
 				FinalText = Expanded; // Always update FinalText!
 			}
 
-			UINT Hash = _FileCheckHashLine(FinalText, FinalLength, Config);
-			if (!_FileCheckLineArrayAppend(LineArray, FinalText, FinalLength, Hash))
+			UINT Hash = _FC_HashLine(FinalText, FinalLength, Config);
+			if (!_FC_LineArrayAppend(LineArray, FinalText, FinalLength, Hash))
 			{
 				HeapFree(GetProcessHeap(), 0, FinalText);
-				_FileCheckLineArrayFree(LineArray);
+				_FC_LineArrayFree(LineArray);
 				return FC_ERROR_MEMORY;
 			}
 
@@ -651,9 +648,9 @@ extern "C" {
 	}
 
 	static inline FC_RESULT
-		_FileCheckCompareLineArrays(
-			_In_ const FC_LINE_ARRAY* ArrayA,
-			_In_ const FC_LINE_ARRAY* ArrayB,
+		_FC_CompareLineArrays(
+			_In_ const _FC_LINE_ARRAY* ArrayA,
+			_In_ const _FC_LINE_ARRAY* ArrayB,
 			_In_ const FC_CONFIG* Config)
 	{
 		// First check: line count mismatch.
@@ -670,8 +667,8 @@ extern "C" {
 		// fallback to byte-wise memcmp is used only if hashes match and case must be preserved.
 		for (size_t i = 0; i < ArrayA->Count; ++i)
 		{
-			const FC_LINE* LineA = &ArrayA->Lines[i];
-			const FC_LINE* LineB = &ArrayB->Lines[i];
+			const _FC_LINE* LineA = &ArrayA->Lines[i];
+			const _FC_LINE* LineB = &ArrayB->Lines[i];
 
 			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
@@ -728,7 +725,7 @@ extern "C" {
 	}
 
 	static inline char*
-		_FileCheckReadFileContents(
+		_FC_ReadFileContents(
 			_In_z_ const WCHAR* Path,
 			_Out_ size_t* OutputLength,
 			_Out_ FC_RESULT* Result)
@@ -775,7 +772,7 @@ extern "C" {
 		{
 			CloseHandle(FileHandle);
 			*Result = FC_OK;
-			return _FileCheckStringDuplicateRange("", 0);
+			return _FC_StringDuplicateRange("", 0);
 		}
 
 		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length);
@@ -802,23 +799,23 @@ extern "C" {
 	}
 
 	static inline BOOL
-		IsProbablyTextBuffer(const BYTE* buffer, DWORD length)
+		_FC_IsProbablyTextBuffer(const BYTE* Buffer, DWORD BufferLength)
 	{
 		const double textThreshold = 0.90;
-		if (length == 0) return FALSE;
+		if (BufferLength == 0) return FALSE;
 
 		// Detect UTF BOMs (early exit for known good encodings)
-		if (length >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) // UTF-8 BOM
+		if (BufferLength >= 3 && Buffer[0] == 0xEF && Buffer[1] == 0xBB && Buffer[2] == 0xBF) // UTF-8 BOM
 			return TRUE;
-		if (length >= 2 && buffer[0] == 0xFF && buffer[1] == 0xFE) // UTF-16 LE BOM
+		if (BufferLength >= 2 && Buffer[0] == 0xFF && Buffer[1] == 0xFE) // UTF-16 LE BOM
 			return TRUE;
-		if (length >= 2 && buffer[0] == 0xFE && buffer[1] == 0xFF) // UTF-16 BE BOM
+		if (BufferLength >= 2 && Buffer[0] == 0xFE && Buffer[1] == 0xFF) // UTF-16 BE BOM
 			return TRUE;
 
 		int printable = 0;
-		for (DWORD i = 0; i < length; ++i)
+		for (DWORD i = 0; i < BufferLength; ++i)
 		{
-			BYTE c = buffer[i];
+			BYTE c = Buffer[i];
 			if ((c >= 32 && c <= 126) || c == 9 || c == 10 || c == 13) {
 				printable++;
 			}
@@ -828,14 +825,14 @@ extern "C" {
 			// Could expand here with UTF-8 continuation byte validation, if needed
 		}
 
-		double ratio = (double)printable / length;
+		double ratio = (double)printable / BufferLength;
 		return (ratio >= textThreshold);
 	}
 
 	static inline BOOL
-		IsProbablyTextFileW(const WCHAR* filepath) {
+		_FC_IsProbablyTextFileW(const WCHAR* Path) {
 		HANDLE hFile = CreateFileW(
-			filepath,
+			Path,
 			GENERIC_READ,
 			FILE_SHARE_READ,
 			NULL,
@@ -853,11 +850,11 @@ extern "C" {
 		CloseHandle(hFile);
 		if (!success || bytesRead == 0) return FALSE;
 
-		return IsProbablyTextBuffer(buffer, bytesRead);
+		return _FC_IsProbablyTextBuffer(buffer, bytesRead);
 	}
 
 	static FC_RESULT
-		_FileCheckCompareFilesText(
+		_FC_CompareFilesText(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -866,35 +863,35 @@ extern "C" {
 		size_t Length1 = 0, Length2 = 0;
 		char* Buffer1 = NULL;
 		char* Buffer2 = NULL;
-		FC_LINE_ARRAY ArrayA, ArrayB;
+		_FC_LINE_ARRAY ArrayA, ArrayB;
 
-		_FileCheckLineArrayInit(&ArrayA);
-		_FileCheckLineArrayInit(&ArrayB);
+		_FC_LineArrayInit(&ArrayA);
+		_FC_LineArrayInit(&ArrayB);
 
-		Buffer1 = _FileCheckReadFileContents(Path1, &Length1, &Result);
+		Buffer1 = _FC_ReadFileContents(Path1, &Length1, &Result);
 		if (!Buffer1) goto cleanup;
 
-		Buffer2 = _FileCheckReadFileContents(Path2, &Length2, &Result);
+		Buffer2 = _FC_ReadFileContents(Path2, &Length2, &Result);
 		if (!Buffer2) goto cleanup;
 
-		Result = _FileCheckParseLines(Buffer1, Length1, &ArrayA, Config);
+		Result = _FC_ParseLines(Buffer1, Length1, &ArrayA, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FileCheckParseLines(Buffer2, Length2, &ArrayB, Config);
+		Result = _FC_ParseLines(Buffer2, Length2, &ArrayB, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FileCheckCompareLineArrays(&ArrayA, &ArrayB, Config);
+		Result = _FC_CompareLineArrays(&ArrayA, &ArrayB, Config);
 
 	cleanup:
 		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
 		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
-		_FileCheckLineArrayFree(&ArrayA);
-		_FileCheckLineArrayFree(&ArrayB);
+		_FC_LineArrayFree(&ArrayA);
+		_FC_LineArrayFree(&ArrayB);
 		return Result;
 	}
 
 	static FC_RESULT
-		_FileCheckCompareFilesBinary(
+		_FC_CompareFilesBinary(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -973,7 +970,7 @@ extern "C" {
 		{
 			char Message[64] = "Binary diff at offset 0x";
 			char HexBuffer[17];
-			_FileCheckIntegerToHex(FirstDifference, HexBuffer);
+			_FC_IntegerToHex(FirstDifference, HexBuffer);
 
 			char* Ptr = Message;
 			while (*Ptr) Ptr++;
@@ -994,7 +991,7 @@ extern "C" {
 	}
 
 	static BOOL
-		_FileCheckPreparePath(
+		_FC_PreparePath(
 			_In_z_ const WCHAR* InputPath,
 			_Outptr_result_nullonfailure_ WCHAR** CanonicalPathOut)
 	{
@@ -1109,7 +1106,7 @@ extern "C" {
 	//
 
 	FC_RESULT
-		FileCheckCompareFilesUtf8(
+		FC_CompareFilesUtf8(
 			_In_z_ const char* Path1Utf8,
 			_In_z_ const char* Path2Utf8,
 			_In_ const FC_CONFIG* Config)
@@ -1159,7 +1156,7 @@ extern "C" {
 			goto cleanup;
 		}
 
-		Result = FileCheckCompareFilesW(WidePath1, WidePath2, Config);
+		Result = FC_CompareFilesW(WidePath1, WidePath2, Config);
 
 	cleanup:
 		if (WidePath1 != NULL) HeapFree(GetProcessHeap(), 0, WidePath1);
@@ -1168,7 +1165,7 @@ extern "C" {
 	}
 
 	FC_RESULT
-		FileCheckCompareFilesW(
+		FC_CompareFilesW(
 			_In_z_ const WCHAR* Path1,
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
@@ -1179,8 +1176,8 @@ extern "C" {
 		WCHAR* CanonicalPath1 = NULL;
 		WCHAR* CanonicalPath2 = NULL;
 
-		if (!_FileCheckPreparePath(Path1, &CanonicalPath1) ||
-			!_FileCheckPreparePath(Path2, &CanonicalPath2))
+		if (!_FC_PreparePath(Path1, &CanonicalPath1) ||
+			!_FC_PreparePath(Path2, &CanonicalPath2))
 		{
 			if (CanonicalPath1) HeapFree(GetProcessHeap(), 0, CanonicalPath1);
 			if (CanonicalPath2) HeapFree(GetProcessHeap(), 0, CanonicalPath2);
@@ -1193,19 +1190,19 @@ extern "C" {
 		{
 		case FC_MODE_TEXT_ASCII:
 		case FC_MODE_TEXT_UNICODE:
-			Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
+			Result = _FC_CompareFilesText(CanonicalPath1, CanonicalPath2, Config);
 			break;
 		case FC_MODE_BINARY:
-			Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+			Result = _FC_CompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
 			break;
 		case FC_MODE_AUTO:
 		default: {
-			BOOL isText1 = IsProbablyTextFileW(Path1);
-			BOOL isText2 = IsProbablyTextFileW(Path2);
+			BOOL isText1 = _FC_IsProbablyTextFileW(Path1);
+			BOOL isText2 = _FC_IsProbablyTextFileW(Path2);
 			if (isText1 && isText2)
-				Result = _FileCheckCompareFilesText(CanonicalPath1, CanonicalPath2, Config);
+				Result = _FC_CompareFilesText(CanonicalPath1, CanonicalPath2, Config);
 			else
-				Result = _FileCheckCompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
+				Result = _FC_CompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
 			break;
 		}
 		}
