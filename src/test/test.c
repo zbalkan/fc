@@ -142,11 +142,11 @@ static void Test_Tabs(const WCHAR* baseDir)
     ConvertWideToUtf8OrExit(p1,u1,sizeof(u1)); ConvertWideToUtf8OrExit(p2,u2,sizeof(u2));
     // default expand tabs
     cfg.Flags = 0;
-    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_OK)
+    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) != FC_OK)
         ReportErrorAndExit(L"Tab expansion failed", NULL);
     // raw tabs
     cfg.Flags = FC_RAW_TABS;
-    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT)
+    if (FileCheckCompareFilesUtf8(u1, u2, &cfg) != FC_DIFFERENT)
         ReportErrorAndExit(L"Raw tabs handling failed", NULL);
 }
 static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
