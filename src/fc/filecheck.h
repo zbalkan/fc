@@ -426,67 +426,168 @@ extern "C" {
 		return TRUE;
 	}
 
-	//
-	// Helper function to expand tabs to spaces.
-	// Returns a new, heap-allocated string. The caller must free it.
-	//
+	// Linked-list node holding a chunk of characters
+	typedef struct _FileCheckCharNode {
+		char* data;
+		size_t length;
+		struct _FileCheckCharNode* next;
+	} _FileCheckCharNode;
+
+	// Create a new node with a copy of the given data
+	static _FileCheckCharNode*
+		_FileCheckCreateNode(
+			_In_reads_(length) const char* data,
+			_In_ size_t length)
+	{
+		_FileCheckCharNode* node = (_FileCheckCharNode*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FileCheckCharNode));
+		if (!node)
+			return NULL;
+		node->data = (char*)HeapAlloc(GetProcessHeap(), 0, length + 1);
+		if (!node->data) {
+			HeapFree(GetProcessHeap(), 0, node);
+			return NULL;
+		}
+		memcpy(node->data, data, length);
+		node->data[length] = '\0';
+		node->length = length;
+		node->next = NULL;
+		return node;
+	}
+
+	// Free the entire linked list
+	static void
+		_FileCheckFreeList(
+			_In_opt_ _FileCheckCharNode* head)
+	{
+		while (head) {
+			_FileCheckCharNode* next = head->next;
+			HeapFree(GetProcessHeap(), 0, head->data);
+			HeapFree(GetProcessHeap(), 0, head);
+			head = next;
+		}
+	}
+
+	// Build a linked list from the source string, splitting at tabs
+	static _FileCheckCharNode*
+		_FileCheckBuildList(
+			_In_reads_(srcLen) const char* src,
+			_In_ size_t srcLen)
+	{
+		_FileCheckCharNode* head = NULL;
+		_FileCheckCharNode* tail = NULL;
+		size_t i = 0;
+
+		while (i < srcLen) {
+			if (src[i] == '\t') {
+				_FileCheckCharNode* node = _FileCheckCreateNode("\t", 1);
+				if (!node) { _FileCheckFreeList(head); return NULL; }
+				if (!head)
+					head = tail = node;
+				else {
+					tail->next = node;
+					tail = node;
+				}
+				i++;
+			}
+			else {
+				size_t start = i;
+				while (i < srcLen && src[i] != '\t')
+					++i;
+				size_t len = i - start;
+				_FileCheckCharNode* node = _FileCheckCreateNode(src + start, len);
+				if (!node) { _FileCheckFreeList(head); return NULL; }
+				if (!head)
+					head = tail = node;
+				else {
+					tail->next = node;
+					tail = node;
+				}
+			}
+		}
+		return head;
+	}
+
+	// Replace each tab node with a node containing TabWidth spaces
+	static void
+		_FileCheckExpandTabsInList(
+			_Inout_ _FileCheckCharNode** headPtr,
+			_In_ size_t TabWidth)
+	{
+		_FileCheckCharNode* prev = NULL;
+		_FileCheckCharNode* curr = *headPtr;
+
+		while (curr) {
+			if (curr->length == 1 && curr->data[0] == '\t') {
+				// Allocate space buffer
+				char* spaces = (char*)HeapAlloc(GetProcessHeap(), 0, TabWidth + 1);
+				if (!spaces)
+					return;
+				memset(spaces, ' ', TabWidth);
+				spaces[TabWidth] = '\0';
+
+				_FileCheckCharNode* spaceNode = _FileCheckCreateNode(spaces, TabWidth);
+				HeapFree(GetProcessHeap(), 0, spaces);
+				if (!spaceNode)
+					return;
+
+				// Splice in the new node
+				spaceNode->next = curr->next;
+				if (prev)
+					prev->next = spaceNode;
+				else
+					*headPtr = spaceNode;
+
+				// Free the old tab node
+				HeapFree(GetProcessHeap(), 0, curr->data);
+				HeapFree(GetProcessHeap(), 0, curr);
+				curr = spaceNode;
+			}
+			prev = curr;
+			curr = curr->next;
+		}
+	}
+
+	// Flatten the linked list back into a single string
+	static char*
+		_FileCheckFlattenList(
+			_In_ _FileCheckCharNode* head,
+			_Out_ size_t* newLength)
+	{
+		size_t total = 0;
+		for (_FileCheckCharNode* n = head; n; n = n->next)
+			total += n->length;
+
+		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
+		if (!dest)
+			return NULL;
+
+		size_t pos = 0;
+		for (_FileCheckCharNode* n = head; n; n = n->next) {
+			memcpy(dest + pos, n->data, n->length);
+			pos += n->length;
+		}
+		dest[pos] = '\0';
+		*newLength = pos;
+		return dest;
+	}
+
+	// Wrapper matching original signature, using linked-list expansion
 	static inline char*
 		_FileCheckExpandTabs(
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
-		{
-    *NewLength = 0;
-    const int TabWidth = 4;
-
-    BOOL HasTabs = FALSE;
-    size_t ExpandedLength = 0;
-
-    for (size_t i = 0; i < SourceLength; ++i)
-    {
-        if (Source[i] == '\t')
-        {
-            HasTabs = TRUE;
-            ExpandedLength += TabWidth - (ExpandedLength % TabWidth);
-        }
-        else
-        {
-            ExpandedLength++;
-        }
-    }
-
-    // Always return a heap-allocated copy, even if there are no tabs
-    if (!HasTabs)
-    {
-        *NewLength = SourceLength;
-        return _FileCheckStringDuplicateRange(Source, SourceLength);
-    }
-
-    char* Dest = (char*)HeapAlloc(GetProcessHeap(), 0, ExpandedLength + 1);
-    if (Dest == NULL)
-        return NULL;
-
-    size_t DestIndex = 0;
-    for (size_t i = 0; i < SourceLength; ++i)
-    {
-        if (Source[i] == '\t')
-        {
-            size_t SpacesToAdd = TabWidth - (DestIndex % TabWidth);
-            for (size_t s = 0; s < SpacesToAdd; ++s)
-            {
-                Dest[DestIndex++] = ' ';
-            }
-        }
-        else
-        {
-            Dest[DestIndex++] = Source[i];
-        }
-    }
-    Dest[DestIndex] = '\0';
-    *NewLength = DestIndex;
-    return Dest;
-}
-
+	{
+		const size_t TabWidth = 4;
+		_FileCheckCharNode* list = _FileCheckBuildList(Source, SourceLength);
+		if (!list)
+			return NULL;
+		_FileCheckExpandTabsInList(&list, TabWidth);
+		char* result = _FileCheckFlattenList(list, NewLength);
+		_FileCheckFreeList(list);
+		return result;
+	}
+    
 	static inline FC_RESULT
 		_FileCheckParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
@@ -528,9 +629,7 @@ extern "C" {
 					return FC_ERROR_MEMORY;
 				}
 
-				if (Expanded != LineText)
-					HeapFree(GetProcessHeap(), 0, LineText);
-
+				HeapFree(GetProcessHeap(), 0, LineText);
 				FinalText = Expanded; // Always update FinalText!
 			}
 
