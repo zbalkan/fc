@@ -178,14 +178,14 @@ extern "C" {
 		char* Text;
 		size_t Length;
 		UINT Hash;
-	} FC_LINE;
+	} _FC_LINE;
 
 	typedef struct
 	{
-		FC_LINE* Lines;
+		_FC_LINE* Lines;
 		size_t Count;
 		size_t Capacity;
-	} FC_LINE_ARRAY;
+	} _FC_LINE_ARRAY;
 
 	static inline unsigned char
 		_FC_ToLowerAscii(
@@ -295,7 +295,7 @@ extern "C" {
 
 	static inline void
 		_FC_LineArrayInit(
-			_Inout_ FC_LINE_ARRAY* LineArray)
+			_Inout_ _FC_LINE_ARRAY* LineArray)
 	{
 		LineArray->Lines = NULL;
 		LineArray->Count = 0;
@@ -304,7 +304,7 @@ extern "C" {
 
 	static inline void
 		_FC_LineArrayFree(
-			_Inout_ FC_LINE_ARRAY* LineArray)
+			_Inout_ _FC_LINE_ARRAY* LineArray)
 	{
 		if (LineArray->Lines != NULL)
 		{
@@ -388,7 +388,7 @@ extern "C" {
 
 	static inline BOOL
 		_FC_LineArrayAppend(
-			_Inout_ FC_LINE_ARRAY* LineArray,
+			_Inout_ _FC_LINE_ARRAY* LineArray,
 			_In_ _Post_invalid_ char* Text,
 			_In_ size_t Length,
 			_In_ UINT Hash)
@@ -399,14 +399,14 @@ extern "C" {
 			if (LineArray->Count + 1 > LineArray->Capacity)
 			{
 				size_t NewCapacity = LineArray->Capacity ? LineArray->Capacity * 2 : 64;
-				FC_LINE* Temp = NULL;
+				_FC_LINE* Temp = NULL;
 				if (LineArray->Lines == NULL)
 				{
-					Temp = (FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(FC_LINE));
+					Temp = (_FC_LINE*)HeapAlloc(GetProcessHeap(), 0, NewCapacity * sizeof(_FC_LINE));
 				}
 				else
 				{
-					Temp = (FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(FC_LINE));
+					Temp = (_FC_LINE*)HeapReAlloc(GetProcessHeap(), 0, LineArray->Lines, NewCapacity * sizeof(_FC_LINE));
 				}
 				if (Temp == NULL)
 				{
@@ -425,78 +425,78 @@ extern "C" {
 
 	// Linked-list node holding a chunk of characters
 	typedef struct _FC_CHAR_NODE_STRUCT {
-		char* data;
-		size_t length;
-		struct _FC_CHAR_NODE_STRUCT* next;
+		char* Payload;
+		size_t Length;
+		struct _FC_CHAR_NODE_STRUCT* Next;
 	} _FC_CHAR_NODE;
 
 	// Create a new node with a copy of the given data
 	static _FC_CHAR_NODE*
 		_FC_CreateNode(
-			_In_reads_(length) const char* data,
-			_In_ size_t length)
+			_In_reads_(length) const char* Payload,
+			_In_ size_t Length)
 	{
 		_FC_CHAR_NODE* node = (_FC_CHAR_NODE*)HeapAlloc(GetProcessHeap(), 0, sizeof(_FC_CHAR_NODE));
 		if (!node)
 			return NULL;
-		node->data = (char*)HeapAlloc(GetProcessHeap(), 0, length + 1);
-		if (!node->data) {
+		node->Payload = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+		if (!node->Payload) {
 			HeapFree(GetProcessHeap(), 0, node);
 			return NULL;
 		}
-		memcpy(node->data, data, length);
-		node->data[length] = '\0';
-		node->length = length;
-		node->next = NULL;
+		memcpy(node->Payload, Payload, Length);
+		node->Payload[Length] = '\0';
+		node->Length = Length;
+		node->Next = NULL;
 		return node;
 	}
 
 	// Free the entire linked list
 	static void
 		_FC_FreeList(
-			_In_opt_ _FC_CHAR_NODE* head)
+			_In_opt_ _FC_CHAR_NODE* Head)
 	{
-		while (head) {
-			_FC_CHAR_NODE* next = head->next;
-			HeapFree(GetProcessHeap(), 0, head->data);
-			HeapFree(GetProcessHeap(), 0, head);
-			head = next;
+		while (Head) {
+			_FC_CHAR_NODE* next = Head->Next;
+			HeapFree(GetProcessHeap(), 0, Head->Payload);
+			HeapFree(GetProcessHeap(), 0, Head);
+			Head = next;
 		}
 	}
 
 	// Build a linked list from the source string, splitting at tabs
 	static _FC_CHAR_NODE*
 		_FC_BuildList(
-			_In_reads_(srcLen) const char* src,
-			_In_ size_t srcLen)
+			_In_reads_(SourceLength) const char* Source,
+			_In_ size_t SourceLength)
 	{
 		_FC_CHAR_NODE* head = NULL;
 		_FC_CHAR_NODE* tail = NULL;
 		size_t i = 0;
 
-		while (i < srcLen) {
-			if (src[i] == '\t') {
+		while (i < SourceLength) {
+			if (Source[i] == '\t') {
 				_FC_CHAR_NODE* node = _FC_CreateNode("\t", 1);
 				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
 				else {
-					tail->next = node;
+					tail->Next = node;
 					tail = node;
 				}
 				i++;
 			}
 			else {
 				size_t start = i;
-				while (i < srcLen && src[i] != '\t')
+				while (i < SourceLength && Source[i] != '\t')
 					++i;
 				size_t len = i - start;
-				_FC_CHAR_NODE* node = _FC_CreateNode(src + start, len);
+				_FC_CHAR_NODE* node = _FC_CreateNode(Source + start, len);
 				if (!node) { _FC_FreeList(head); return NULL; }
 				if (!head)
 					head = tail = node;
 				else {
-					tail->next = node;
+					tail->Next = node;
 					tail = node;
 				}
 			}
@@ -507,14 +507,14 @@ extern "C" {
 	// Replace each tab node with a node containing TabWidth spaces
 	static void
 		_FC_ExpandTabsInList(
-			_Inout_ _FC_CHAR_NODE** headPtr,
+			_Inout_ _FC_CHAR_NODE** HeadPtr,
 			_In_ size_t TabWidth)
 	{
 		_FC_CHAR_NODE* prev = NULL;
-		_FC_CHAR_NODE* curr = *headPtr;
+		_FC_CHAR_NODE* curr = *HeadPtr;
 
 		while (curr) {
-			if (curr->length == 1 && curr->data[0] == '\t') {
+			if (curr->Length == 1 && curr->Payload[0] == '\t') {
 				// Allocate space buffer
 				char* spaces = (char*)HeapAlloc(GetProcessHeap(), 0, TabWidth + 1);
 				if (!spaces)
@@ -528,43 +528,43 @@ extern "C" {
 					return;
 
 				// Splice in the new node
-				spaceNode->next = curr->next;
+				spaceNode->Next = curr->Next;
 				if (prev)
-					prev->next = spaceNode;
+					prev->Next = spaceNode;
 				else
-					*headPtr = spaceNode;
+					*HeadPtr = spaceNode;
 
 				// Free the old tab node
-				HeapFree(GetProcessHeap(), 0, curr->data);
+				HeapFree(GetProcessHeap(), 0, curr->Payload);
 				HeapFree(GetProcessHeap(), 0, curr);
 				curr = spaceNode;
 			}
 			prev = curr;
-			curr = curr->next;
+			curr = curr->Next;
 		}
 	}
 
 	// Flatten the linked list back into a single string
 	static char*
-		_FC_CheckFlattenList(
-			_In_ _FC_CHAR_NODE* head,
-			_Out_ size_t* newLength)
+		_FC_FlattenList(
+			_In_ _FC_CHAR_NODE* Head,
+			_Out_ size_t* NewLength)
 	{
 		size_t total = 0;
-		for (_FC_CHAR_NODE* n = head; n; n = n->next)
-			total += n->length;
+		for (_FC_CHAR_NODE* n = Head; n; n = n->Next)
+			total += n->Length;
 
 		char* dest = (char*)HeapAlloc(GetProcessHeap(), 0, total + 1);
 		if (!dest)
 			return NULL;
 
 		size_t pos = 0;
-		for (_FC_CHAR_NODE* n = head; n; n = n->next) {
-			memcpy(dest + pos, n->data, n->length);
-			pos += n->length;
+		for (_FC_CHAR_NODE* n = Head; n; n = n->Next) {
+			memcpy(dest + pos, n->Payload, n->Length);
+			pos += n->Length;
 		}
 		dest[pos] = '\0';
-		*newLength = pos;
+		*NewLength = pos;
 		return dest;
 	}
 
@@ -589,7 +589,7 @@ extern "C" {
 		_FC_ParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
 			_In_ size_t BufferLength,
-			_Inout_ FC_LINE_ARRAY* LineArray,
+			_Inout_ _FC_LINE_ARRAY* LineArray,
 			_In_ const FC_CONFIG* Config)
 	{
 		_FC_LineArrayInit(LineArray);
@@ -649,8 +649,8 @@ extern "C" {
 
 	static inline FC_RESULT
 		_FC_CompareLineArrays(
-			_In_ const FC_LINE_ARRAY* ArrayA,
-			_In_ const FC_LINE_ARRAY* ArrayB,
+			_In_ const _FC_LINE_ARRAY* ArrayA,
+			_In_ const _FC_LINE_ARRAY* ArrayB,
 			_In_ const FC_CONFIG* Config)
 	{
 		// First check: line count mismatch.
@@ -667,8 +667,8 @@ extern "C" {
 		// fallback to byte-wise memcmp is used only if hashes match and case must be preserved.
 		for (size_t i = 0; i < ArrayA->Count; ++i)
 		{
-			const FC_LINE* LineA = &ArrayA->Lines[i];
-			const FC_LINE* LineB = &ArrayB->Lines[i];
+			const _FC_LINE* LineA = &ArrayA->Lines[i];
+			const _FC_LINE* LineB = &ArrayB->Lines[i];
 
 			// Fast hash mismatch check — high-probability early exit
 			if (LineA->Hash != LineB->Hash)
@@ -799,23 +799,23 @@ extern "C" {
 	}
 
 	static inline BOOL
-		_FC_IsProbablyTextBuffer(const BYTE* buffer, DWORD length)
+		_FC_IsProbablyTextBuffer(const BYTE* Buffer, DWORD BufferLength)
 	{
 		const double textThreshold = 0.90;
-		if (length == 0) return FALSE;
+		if (BufferLength == 0) return FALSE;
 
 		// Detect UTF BOMs (early exit for known good encodings)
-		if (length >= 3 && buffer[0] == 0xEF && buffer[1] == 0xBB && buffer[2] == 0xBF) // UTF-8 BOM
+		if (BufferLength >= 3 && Buffer[0] == 0xEF && Buffer[1] == 0xBB && Buffer[2] == 0xBF) // UTF-8 BOM
 			return TRUE;
-		if (length >= 2 && buffer[0] == 0xFF && buffer[1] == 0xFE) // UTF-16 LE BOM
+		if (BufferLength >= 2 && Buffer[0] == 0xFF && Buffer[1] == 0xFE) // UTF-16 LE BOM
 			return TRUE;
-		if (length >= 2 && buffer[0] == 0xFE && buffer[1] == 0xFF) // UTF-16 BE BOM
+		if (BufferLength >= 2 && Buffer[0] == 0xFE && Buffer[1] == 0xFF) // UTF-16 BE BOM
 			return TRUE;
 
 		int printable = 0;
-		for (DWORD i = 0; i < length; ++i)
+		for (DWORD i = 0; i < BufferLength; ++i)
 		{
-			BYTE c = buffer[i];
+			BYTE c = Buffer[i];
 			if ((c >= 32 && c <= 126) || c == 9 || c == 10 || c == 13) {
 				printable++;
 			}
@@ -825,14 +825,14 @@ extern "C" {
 			// Could expand here with UTF-8 continuation byte validation, if needed
 		}
 
-		double ratio = (double)printable / length;
+		double ratio = (double)printable / BufferLength;
 		return (ratio >= textThreshold);
 	}
 
 	static inline BOOL
-		_FC_IsProbablyTextFileW(const WCHAR* filepath) {
+		_FC_IsProbablyTextFileW(const WCHAR* Path) {
 		HANDLE hFile = CreateFileW(
-			filepath,
+			Path,
 			GENERIC_READ,
 			FILE_SHARE_READ,
 			NULL,
@@ -863,7 +863,7 @@ extern "C" {
 		size_t Length1 = 0, Length2 = 0;
 		char* Buffer1 = NULL;
 		char* Buffer2 = NULL;
-		FC_LINE_ARRAY ArrayA, ArrayB;
+		_FC_LINE_ARRAY ArrayA, ArrayB;
 
 		_FC_LineArrayInit(&ArrayA);
 		_FC_LineArrayInit(&ArrayB);
