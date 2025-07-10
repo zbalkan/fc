@@ -580,7 +580,7 @@ extern "C" {
 		if (!list)
 			return NULL;
 		_FC_ExpandTabsInList(&list, TabWidth);
-		char* result = _FC_CheckFlattenList(list, NewLength);
+		char* result = _FC_FlattenList(list, NewLength);
 		_FC_FreeList(list);
 		return result;
 	}
@@ -1101,6 +1101,59 @@ extern "C" {
 		return TRUE;
 	}
 
+	static WCHAR* _FC_ConvertUtf8ToWide(const char* Utf8String)
+	{
+		if (Utf8String == NULL) return NULL;
+
+		int wideLength = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8String, -1, NULL, 0);
+		if (wideLength == 0) {
+			return NULL; // Invalid characters or other error
+		}
+
+		WCHAR* wideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wideLength * sizeof(WCHAR));
+		if (wideBuffer == NULL) {
+			return NULL; // Memory allocation failed
+		}
+
+		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8String, -1, wideBuffer, wideLength) == 0) {
+			HeapFree(GetProcessHeap(), 0, wideBuffer);
+			return NULL; // Conversion failed
+		}
+
+		return wideBuffer;
+	}
+
+	static inline FC_RESULT
+		_FC_CompareFilesInternal(
+			_In_z_ const WCHAR* Path1,
+			_In_z_ const WCHAR* Path2,
+			_In_ const FC_CONFIG* Config)
+	{
+		switch (Config->Mode)
+		{
+		case FC_MODE_TEXT_ASCII:
+		case FC_MODE_TEXT_UNICODE:
+			// Corrected order: Path1, Path2
+			return _FC_CompareFilesText(Path1, Path2, Config);
+
+		case FC_MODE_BINARY:
+			// Corrected order: Path1, Path2
+			return _FC_CompareFilesBinary(Path1, Path2, Config);
+
+		case FC_MODE_AUTO:
+		default:
+		{
+			// Corrected order
+			BOOL isText1 = _FC_IsProbablyTextFileW(Path1);
+			BOOL isText2 = _FC_IsProbablyTextFileW(Path2);
+			if (isText1 && isText2)
+				return _FC_CompareFilesText(Path1, Path2, Config);
+			else
+				return _FC_CompareFilesBinary(Path1, Path2, Config);
+		}
+		}
+	}
+
 	//
 	// Main Implementation
 	//
@@ -1111,56 +1164,38 @@ extern "C" {
 			_In_z_ const char* Path2Utf8,
 			_In_ const FC_CONFIG* Config)
 	{
+		FC_RESULT Result = FC_OK;
 		WCHAR* WidePath1 = NULL;
 		WCHAR* WidePath2 = NULL;
-		FC_RESULT Result = FC_OK;
 
 		if (Path1Utf8 == NULL || Path2Utf8 == NULL)
 		{
-			return FC_ERROR_INVALID_PARAM;
-		}
-
-		int WideLength1 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, NULL, 0);
-		if (WideLength1 == 0)
-		{
-			Result = FC_ERROR_INVALID_PARAM;
-			goto cleanup;
-		}
-		WidePath1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength1 * sizeof(WCHAR));
-		if (WidePath1 == NULL)
-		{
-			Result = FC_ERROR_MEMORY;
-			goto cleanup;
-		}
-		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path1Utf8, -1, WidePath1, WideLength1) == 0)
-		{
 			Result = FC_ERROR_INVALID_PARAM;
 			goto cleanup;
 		}
 
-		int WideLength2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, NULL, 0);
-		if (WideLength2 == 0)
+		// Convert paths
+		WidePath1 = _FC_ConvertUtf8ToWide(Path1Utf8);
+		WidePath2 = _FC_ConvertUtf8ToWide(Path2Utf8);
+
+		if (WidePath1 == NULL || WidePath2 == NULL)
 		{
-			Result = FC_ERROR_INVALID_PARAM;
-			goto cleanup;
-		}
-		WidePath2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength2 * sizeof(WCHAR));
-		if (WidePath2 == NULL)
-		{
-			Result = FC_ERROR_MEMORY;
-			goto cleanup;
-		}
-		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Path2Utf8, -1, WidePath2, WideLength2) == 0)
-		{
-			Result = FC_ERROR_INVALID_PARAM;
+			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
+				? FC_ERROR_INVALID_PARAM
+				: FC_ERROR_MEMORY;
 			goto cleanup;
 		}
 
+		// Chain to the primary public API, not the internal one.
+		// FC_CompareFilesW will handle path validation and the actual comparison.
 		Result = FC_CompareFilesW(WidePath1, WidePath2, Config);
 
 	cleanup:
-		if (WidePath1 != NULL) HeapFree(GetProcessHeap(), 0, WidePath1);
-		if (WidePath2 != NULL) HeapFree(GetProcessHeap(), 0, WidePath2);
+		// This function owns the wide paths, so it frees them here.
+		// There is no more double-free bug.
+		if (WidePath1) HeapFree(GetProcessHeap(), 0, WidePath1);
+		if (WidePath2) HeapFree(GetProcessHeap(), 0, WidePath2);
+
 		return Result;
 	}
 
@@ -1170,45 +1205,31 @@ extern "C" {
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
-		if (!Path1 || !Path2 || !Config || !Config->Output)
-			return FC_ERROR_INVALID_PARAM;
-
+		FC_RESULT Result = FC_OK;
 		WCHAR* CanonicalPath1 = NULL;
 		WCHAR* CanonicalPath2 = NULL;
 
+		if (!Path1 || !Path2 || !Config || !Config->Output)
+		{
+			Result = FC_ERROR_INVALID_PARAM;
+			goto cleanup;
+		}
+
+		// Path preparation
 		if (!_FC_PreparePath(Path1, &CanonicalPath1) ||
 			!_FC_PreparePath(Path2, &CanonicalPath2))
 		{
-			if (CanonicalPath1) HeapFree(GetProcessHeap(), 0, CanonicalPath1);
-			if (CanonicalPath2) HeapFree(GetProcessHeap(), 0, CanonicalPath2);
-			return FC_ERROR_INVALID_PARAM;
+			Result = FC_ERROR_INVALID_PARAM;
+			goto cleanup;
 		}
 
-		FC_RESULT Result;
+		// Call the core logic function, which does NOT free the memory.
+		Result = _FC_CompareFilesInternal(CanonicalPath1, CanonicalPath2, Config);
 
-		switch (Config->Mode)
-		{
-		case FC_MODE_TEXT_ASCII:
-		case FC_MODE_TEXT_UNICODE:
-			Result = _FC_CompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-			break;
-		case FC_MODE_BINARY:
-			Result = _FC_CompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-			break;
-		case FC_MODE_AUTO:
-		default: {
-			BOOL isText1 = _FC_IsProbablyTextFileW(Path1);
-			BOOL isText2 = _FC_IsProbablyTextFileW(Path2);
-			if (isText1 && isText2)
-				Result = _FC_CompareFilesText(CanonicalPath1, CanonicalPath2, Config);
-			else
-				Result = _FC_CompareFilesBinary(CanonicalPath1, CanonicalPath2, Config);
-			break;
-		}
-		}
-
-		HeapFree(GetProcessHeap(), 0, CanonicalPath1);
-		HeapFree(GetProcessHeap(), 0, CanonicalPath2);
+	cleanup:
+		// This function is the owner of these pointers, so it frees them.
+		if (CanonicalPath1) HeapFree(GetProcessHeap(), 0, CanonicalPath1);
+		if (CanonicalPath2) HeapFree(GetProcessHeap(), 0, CanonicalPath2);
 
 		return Result;
 	}
