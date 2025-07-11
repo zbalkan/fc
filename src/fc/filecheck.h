@@ -1102,9 +1102,9 @@ extern "C" {
 		if (NtPath.Length >= 8 * sizeof(WCHAR))
 		{
 			const WCHAR* s = NtPath.Buffer;
-			if ((NtPath.Length >= 36 * sizeof(WCHAR) && _wcsnicmp(s, L"\\Device\\NamedPipe\\", 18) == 0) ||
-				_wcsnicmp(s, L"\\??\\PIPE\\", 9) == 0 ||
-				_wcsnicmp(s, L"\\Device\\", 8) == 0)
+			// Block named pipes and raw device paths
+			if (_wcsnicmp(s, L"\\Device\\", 8) == 0 ||
+				_wcsnicmp(s, L"\\??\\PIPE\\", 9) == 0)
 			{
 				goto cleanup;
 			}
