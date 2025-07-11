@@ -1,4 +1,4 @@
-/*
+ï»¿/*
  * PROJECT:     FileCheck Library
  * LICENSE:     GPL2
  * PURPOSE:     Header-only file comparison library for Windows.
@@ -72,27 +72,27 @@ extern "C" {
 		RtlPathTypeDriveAbsolute,
 
 		/**
-		 * A drive-relative path (e.g., C:folder\file.txt) — resolved against the current directory for the given drive.
+		 * A drive-relative path (e.g., C:folder\file.txt) â€” resolved against the current directory for the given drive.
 		 */
 		RtlPathTypeDriveRelative,
 
 		/**
-		 * A rooted path (e.g., \folder\file.txt) — interpreted relative to the current drive's root.
+		 * A rooted path (e.g., \folder\file.txt) â€” interpreted relative to the current drive's root.
 		 */
 		RtlPathTypeRooted,
 
 		/**
-		 * A relative path (e.g., folder\file.txt) — resolved from the current working directory.
+		 * A relative path (e.g., folder\file.txt) â€” resolved from the current working directory.
 		 */
 		RtlPathTypeRelative,
 
 		/**
-		 * A local device path using the \\.\ prefix (e.g., \\.\COM1) — accesses the DOS device namespace directly.
+		 * A local device path using the \\.\ prefix (e.g., \\.\COM1) â€” accesses the DOS device namespace directly.
 		 */
 		RtlPathTypeLocalDevice,
 
 		/**
-		 * A root-local device path using the \\?\ prefix — bypasses Win32 normalization and accesses raw NT paths.
+		 * A root-local device path using the \\?\ prefix â€” bypasses Win32 normalization and accesses raw NT paths.
 		 */
 		RtlPathTypeRootLocalDevice
 	} RTL_PATH_TYPE;
@@ -403,7 +403,7 @@ extern "C" {
 			if (!_FC_BufferAppendRange(&newBuffer, pTail, tailCount))
 			{
 				_FC_BufferFree(&newBuffer);
-				return FALSE;    // <— free on failure
+				return FALSE;    // <â€” free on failure
 			}
 		}
 
@@ -472,51 +472,79 @@ extern "C" {
 			_Out_ size_t* NewLength)
 	{
 		*NewLength = 0;
+		char* DestBuffer = NULL;
+		WCHAR* WideBuffer = NULL;
+		BOOL   allocatedOnHeap = FALSE;
+
 		if (SourceLength == 0)
 		{
+			// Empty input â†’ return empty string
 			return _FC_StringDuplicateRange("", 0);
 		}
 
-		int WideLength = MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, NULL, 0);
-		if (WideLength == 0) return NULL;
+		// Determine required UTF-16 length
+		int WideLength = MultiByteToWideChar(CP_UTF8, 0,
+			Source, (int)SourceLength,
+			NULL, 0);
+		if (WideLength == 0)
+			goto cleanup;
 
 #define STACK_BUFFER_SIZE 512 // Use stack for up to 512 wide chars (1KB)
 		WCHAR TmpStackBuffer[STACK_BUFFER_SIZE];
-		WCHAR* WideBuffer = TmpStackBuffer; // Default to using the stack buffer.
-		BOOL allocatedOnHeap = FALSE;
+		WideBuffer = TmpStackBuffer;
 
 		// If the required size is larger than our stack buffer, allocate from the heap.
 		if (WideLength > STACK_BUFFER_SIZE)
 		{
-			WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)WideLength * sizeof(WCHAR));
-			if (WideBuffer == NULL) return NULL;
+			WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0,
+				(size_t)WideLength * sizeof(WCHAR));
+			if (WideBuffer == NULL)
+				goto cleanup;
 			allocatedOnHeap = TRUE;
 		}
 
-		MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, WideBuffer, WideLength);
+		// Convert UTF-8 â†’ UTF-16
+		if (MultiByteToWideChar(CP_UTF8, 0,
+			Source, (int)SourceLength,
+			WideBuffer, WideLength) == 0)
+			goto cleanup;
 
+		// Lowercase in place
 		CharLowerW(WideBuffer);
 
-		int Utf8Length = WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, NULL, 0, NULL, NULL);
-		char* DestBuffer = NULL;
+		// Determine required UTF-8 length
+		int Utf8Length = WideCharToMultiByte(CP_UTF8, 0,
+			WideBuffer, WideLength,
+			NULL, 0, NULL, NULL);
+		if (Utf8Length == 0)
+			goto cleanup;
 
-		if (Utf8Length > 0)
+		// Allocate UTF-8 buffer
+		DestBuffer = (char*)HeapAlloc(GetProcessHeap(), 0,
+			(size_t)Utf8Length + 1);
+		if (DestBuffer == NULL)
+			goto cleanup;
+
+		// Convert UTF-16 â†’ UTF-8
+		if (WideCharToMultiByte(CP_UTF8, 0,
+			WideBuffer, WideLength,
+			DestBuffer, Utf8Length,
+			NULL, NULL) == 0)
 		{
-			DestBuffer = (char*)HeapAlloc(GetProcessHeap(), 0, (size_t)Utf8Length + 1);
-			if (DestBuffer != NULL)
-			{
-				WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, DestBuffer, Utf8Length, NULL, NULL);
-				DestBuffer[Utf8Length] = '\0';
-				*NewLength = (size_t)Utf8Length;
-			}
+			HeapFree(GetProcessHeap(), 0, DestBuffer);
+			DestBuffer = NULL;
+			goto cleanup;
 		}
 
-		// Free the buffer only if it was allocated on the heap.
+		DestBuffer[Utf8Length] = '\0';
+		*NewLength = (size_t)Utf8Length;
+
+	cleanup:
+		// Free the heap buffer if it was allocated
 		if (allocatedOnHeap)
-		{
 			HeapFree(GetProcessHeap(), 0, WideBuffer);
-		}
 
+#undef STACK_BUFFER_SIZE
 		return DestBuffer;
 	}
 
@@ -644,7 +672,7 @@ extern "C" {
 			const _FC_LINE* LineA = (_FC_LINE*)_FC_BufferGet(pBufferA, i);
 			const _FC_LINE* LineB = (_FC_LINE*)_FC_BufferGet(pBufferB, i);
 
-			// Fast hash mismatch check — high-probability early exit
+			// Fast hash mismatch check â€” high-probability early exit
 			if (LineA->Hash != LineB->Hash)
 			{
 				return FC_DIFFERENT;
@@ -694,7 +722,7 @@ extern "C" {
 			}
 		}
 
-		// All lines matched exactly or per hash+config — files are equal
+		// All lines matched exactly or per hash+config â€” files are equal
 		return FC_OK;
 	}
 
