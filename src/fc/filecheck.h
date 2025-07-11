@@ -489,6 +489,12 @@ extern "C" {
 			return _FC_StringDuplicateRange("", 0);
 		}
 
+		// The MultiByteToWideChar API uses an int for length, so we must respect that limit.
+		if (SourceLength > INT_MAX)
+		{
+			return NULL; // Input too large for the API.
+		}
+
 		// Determine required UTF-16 length
 		int WideLength = MultiByteToWideChar(CP_UTF8, 0,
 			Source, (int)SourceLength,
