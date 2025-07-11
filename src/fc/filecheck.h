@@ -397,7 +397,6 @@ extern "C" {
 		// If no matches were found at all, we can exit early.
 		if (last_match_end == 0)
 		{
-			_FC_BufferFree(&newBuffer); // Free the unused new buffer
 			return TRUE; // No replacements were made.
 		}
 
