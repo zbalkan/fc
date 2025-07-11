@@ -892,7 +892,7 @@ extern "C" {
 			return NULL;
 		}
 
-		if (FileSize.QuadPart > (ULONGLONG)SIZE_MAX)
+		if (FileSize.QuadPart > (ULONGLONG)SIZE_MAX - 1)
 		{
 			CloseHandle(FileHandle);
 			return NULL;
@@ -906,7 +906,7 @@ extern "C" {
 			return _FC_StringDuplicateRange("", 0);
 		}
 
-		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length);
+		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
 		if (Buffer == NULL)
 		{
 			CloseHandle(FileHandle);
@@ -924,6 +924,7 @@ extern "C" {
 		}
 
 		CloseHandle(FileHandle);
+		Buffer[Length] = '\0'; // Add the null terminator
 		*OutputLength = Length;
 		*Result = FC_OK;
 		return Buffer;
