@@ -14,9 +14,13 @@ extern "C" {
 #include <windows.h>
 #include <winternl.h>
 
-	//
-	// Return codes for comparison operations.
-	//
+	/**
+	 * @enum FC_RESULT
+	 * @brief Defines the return codes for file comparison operations.
+	 *
+	 * These values indicate the outcome of a comparison, distinguishing between
+	 * successful comparisons, differences found, and various types of errors.
+	 */
 	typedef enum
 	{
 		FC_OK = 0,
@@ -26,9 +30,13 @@ extern "C" {
 		FC_ERROR_MEMORY
 	} FC_RESULT;
 
-	//
-	// Specifies the comparison mode (text, binary, or auto).
-	//
+	/**
+	 * @enum FC_MODE
+	 * @brief Specifies the comparison mode to be used.
+	 *
+	 * This determines whether the files are treated as text, binary, or if the library
+	 * should attempt to auto-detect the appropriate mode.
+	 */
 	typedef enum
 	{
 		FC_MODE_TEXT_ASCII,     // Plain text, ASCII/ANSI encoding
@@ -37,24 +45,28 @@ extern "C" {
 		FC_MODE_AUTO            // Auto-detect based on file content
 	} FC_MODE;
 
-	//
-	// Flags to modify comparison behavior.
-	//
+	/**
+	 * @defgroup FC_FLAGS Comparison Behavior Flags
+	 * @brief Flags to modify the behavior of file comparisons.
+	 * @{
+	 */
 #define FC_IGNORE_CASE      0x0001  // Ignore case in text comparison.
 #define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
 #define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
 #define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+	 /** @} */
 
-/**
- * @enum RTL_PATH_TYPE
- * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
- *
- * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
- * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
- * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
- *
- * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
- */
+
+	/**
+	 * @enum RTL_PATH_TYPE
+	 * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
+	 *
+	 * Used with the RtlDetermineDosPathNameType_U function in NTDLL to classify Win32 file path formats
+	 * before conversion to NT-native paths. Understanding these types is critical when validating or sanitizing
+	 * user-provided paths to prevent unintended access to devices, UNC shares, or object manager escape paths.
+	 *
+	 * This enum is not declared in the public Windows SDK and must be defined explicitly for use with Rtl* APIs.
+	 */
 	typedef enum _RTL_PATH_TYPE {
 		/**
 		 * The path type could not be determined. Typically indicates malformed or empty input.
@@ -107,12 +119,15 @@ extern "C" {
 	);
 
 	/**
-	 * @brief Callback function for reporting comparison differences.
+	 * @brief Defines the function pointer for a callback that reports comparison differences.
 	 *
-	 * @param UserData  User-defined data passed from the FC_CONFIG struct.
-	 * @param Message   A UTF-8 encoded string describing the difference.
-	 * @param Line1     The line number in the first file, or -1 if not applicable.
-	 * @param Line2     The line number in the second file, or -1 if not applicable.
+	 * An application can implement a function of this type and pass it in the FC_CONFIG
+	 * structure to receive detailed messages when a difference is found.
+	 *
+	 * @param UserData  A pointer to user-defined data, passed through from the FC_CONFIG struct.
+	 * @param Message   A UTF-8 encoded, null-terminated string describing the difference.
+	 * @param Line1     The line number in the first file where the difference occurred, or -1 if not applicable (e.g., in binary mode).
+	 * @param Line2     The line number in the second file where the difference occurred, or -1 if not applicable.
 	 */
 	typedef void (*FC_OUTPUT_CALLBACK)(
 		_In_opt_ void* UserData,
@@ -120,9 +135,13 @@ extern "C" {
 		_In_ int Line1,
 		_In_ int Line2);
 
-	//
-	// Configuration structure for a file comparison operation.
-	//
+	/**
+	 * @struct FC_CONFIG
+	 * @brief Holds the configuration settings for a file comparison operation.
+	 *
+	 * An instance of this structure must be initialized and passed to the main
+	 * comparison functions to control their behavior.
+	 */
 	typedef struct
 	{
 		FC_MODE Mode;               // Text, binary, or auto-detection mode.
@@ -180,6 +199,16 @@ extern "C" {
 		L"LPT1", L"LPT2", L"LPT3", L"LPT4", L"LPT5", L"LPT6", L"LPT7", L"LPT8", L"LPT9"
 	};
 
+	/**
+	 * @struct _FC_LINE
+	 * @brief Internal representation of a single line of text from a file.
+	 *
+	 * This structure stores the processed text of a line, its length, and a pre-computed
+	 * hash value for fast comparisons. The text is normalized according to the
+	 * active comparison flags (e.g., whitespace removal, tab expansion).
+	 *
+	 * @internal
+	 */
 	typedef struct
 	{
 		char* Text;
@@ -187,10 +216,16 @@ extern "C" {
 		UINT Hash;
 	} _FC_LINE;
 
-	/*
- * Generic, reusable dynamic buffer for any data type.
- * This single structure replaces _FC_LINE_ARRAY and the _FC_CHAR_NODE linked list.
- */
+	/**
+	 * @struct _FC_BUFFER
+	 * @brief A generic, reusable dynamic buffer for storing contiguous elements.
+	 *
+	 * This structure provides a type-agnostic, dynamic array implementation, used
+	 * throughout the library to manage collections of lines (_FC_LINE) and characters (char).
+	 * It handles its own memory management, growing as needed.
+	 *
+	 * @internal
+	 */
 	typedef struct
 	{
 		void* pData;       // Pointer to the block of memory holding the elements.
@@ -199,7 +234,12 @@ extern "C" {
 		size_t Capacity;    // The number of elements the buffer can hold before resizing.
 	} _FC_BUFFER;
 
-	// Initializes a new, empty buffer to hold elements of a specific size.
+	/**
+	 * @brief Initializes a new, empty buffer for elements of a specific size.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER to initialize.
+	 * @param elementSize The size in bytes of each element the buffer will hold.
+	 */
 	static inline void
 		_FC_BufferInit(
 			_Inout_ _FC_BUFFER* pBuffer,
@@ -211,8 +251,13 @@ extern "C" {
 		pBuffer->Capacity = 0;
 	}
 
-	// Frees the internal memory of the buffer.
-	// NOTE: Does not free nested pointers within the elements themselves.
+	/**
+	 * @brief Frees the internal memory block owned by the buffer.
+	 * @internal
+	 * @note This function does not free any nested pointers within the elements themselves.
+	 *       The caller is responsible for freeing such data before calling this.
+	 * @param pBuffer A pointer to the _FC_BUFFER to free.
+	 */
 	static inline void
 		_FC_BufferFree(
 			_Inout_ _FC_BUFFER* pBuffer)
@@ -226,8 +271,16 @@ extern "C" {
 		pBuffer->Capacity = 0;
 	}
 
-	// Ensures the buffer has enough capacity for at least 'additionalCount' new elements.
-	// Returns FALSE on memory allocation failure.
+	/**
+	 * @brief Ensures the buffer has enough capacity for a specified number of new elements.
+	 *
+	 * If the current capacity is insufficient, it reallocates the internal memory,
+	 * typically doubling the size.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER.
+	 * @param additionalCount The number of additional elements to make space for.
+	 * @return TRUE if the capacity is sufficient or reallocation succeeded, FALSE on failure.
+	 */
 	static inline BOOL
 		_FC_BufferEnsureCapacity(
 			_Inout_ _FC_BUFFER* pBuffer,
@@ -262,7 +315,13 @@ extern "C" {
 		return TRUE;
 	}
 
-	// Appends a single element to the end of the buffer.
+	/**
+	 * @brief Appends a single element to the end of the buffer.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER.
+	 * @param pElement A pointer to the element to be copied into the buffer.
+	 * @return TRUE on success, FALSE on memory allocation failure.
+	 */
 	static inline BOOL
 		_FC_BufferAppend(
 			_Inout_ _FC_BUFFER* pBuffer,
@@ -279,7 +338,14 @@ extern "C" {
 		return TRUE;
 	}
 
-	// Appends a range of elements to the end of the buffer.
+	/**
+	 * @brief Appends a range of elements from an array to the end of the buffer.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER.
+	 * @param pElements A pointer to the first element in the array to append.
+	 * @param count The number of elements to append from the array.
+	 * @return TRUE on success, FALSE on memory allocation failure.
+	 */
 	static inline BOOL
 		_FC_BufferAppendRange(
 			_Inout_ _FC_BUFFER* pBuffer,
@@ -298,7 +364,13 @@ extern "C" {
 		return TRUE;
 	}
 
-	// Returns a pointer to the element at a given index.
+	/**
+	 * @brief Retrieves a pointer to the element at a specific index.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER.
+	 * @param index The zero-based index of the element to retrieve.
+	 * @return A pointer to the element, or NULL if the index is out of bounds.
+	 */
 	static inline void*
 		_FC_BufferGet(
 			_In_ const _FC_BUFFER* pBuffer,
@@ -312,13 +384,13 @@ extern "C" {
 	}
 
 	/**
-	 * @brief Finds the first occurrence of a pattern within a buffer.
-	 *
-	 * @param pBuffer The buffer to search in.
-	 * @param pPattern A pointer to the pattern to find.
+	 * @brief Finds the first occurrence of a pattern of elements within a buffer.
+	 * @internal
+	 * @param pBuffer The buffer to search within.
+	 * @param pPattern A pointer to the pattern of elements to find.
 	 * @param patternSize The number of elements in the pattern.
-	 * @param startIndex The index to start searching from.
-	 * @return The starting index of the found pattern, or (size_t)-1 if not found.
+	 * @param startIndex The index in the buffer from which to start the search.
+	 * @return The starting index of the found pattern, or (size_t)-1 if the pattern is not found.
 	 */
 	static inline size_t
 		_FC_BufferFind(
@@ -346,12 +418,20 @@ extern "C" {
 
 
 	/**
-	 * @brief Replaces all occurrences of a pattern with a new pattern, in-place. (Optimized Single-Pass)
+	 * @brief Replaces all occurrences of a pattern with a new pattern.
 	 *
-	 * This function is highly efficient for pattern-based replacement and removal.
-	 * It iterates through the source buffer only once.
-	 *
-	 * @return TRUE on success, FALSE on memory allocation failure.
+	 * This function performs a single-pass replacement. It first calculates the
+	 * required size for the new buffer, allocates it, and then iterates through the
+	 * source buffer, copying non-matching parts and inserting the new pattern where
+	 * matches occur. If the new pattern is NULL or its size is 0, it effectively
+	 * removes all occurrences of the old pattern.
+	 * @internal
+	 * @param pBuffer A pointer to the _FC_BUFFER to modify. The original buffer's data is freed and replaced.
+	 * @param pOldPattern A pointer to the sequence of elements to be replaced.
+	 * @param oldPatternSize The number of elements in the old pattern.
+	 * @param pNewPattern A pointer to the new sequence of elements to insert. Can be NULL to indicate removal.
+	 * @param newPatternSize The number of elements in the new pattern.
+	 * @return TRUE on success, FALSE on memory allocation or parameter validation failure.
 	 */
 	static inline BOOL
 		_FC_BufferReplace(
@@ -475,7 +555,16 @@ extern "C" {
 		return FALSE;
 	}
 
-	// Convenience function to null-terminate and return a character buffer as a string.
+	/**
+	 * @brief Converts a character buffer to a null-terminated string.
+	 *
+	 * Ensures the buffer is of type `char`, appends a null terminator if one is not
+	 * already present, and returns a pointer to the raw data.
+	 * @internal
+	 * @note On failure, this function may free the buffer's internal data.
+	 * @param pBuffer A pointer to the character `_FC_BUFFER`.
+	 * @return A pointer to the null-terminated string, or NULL on failure or if the buffer is not a char buffer.
+	 */
 	static inline char*
 		_FC_BufferToString(
 			_Inout_ _FC_BUFFER* pBuffer)
@@ -497,6 +586,12 @@ extern "C" {
 		return (char*)pBuffer->pData;
 	}
 
+	/**
+	 * @brief Converts an ASCII character to its lowercase equivalent.
+	 * @internal
+	 * @param Character The input character.
+	 * @return The lowercase version of the character if it's an uppercase letter, otherwise the character itself.
+	 */
 	static inline unsigned char
 		_FC_ToLowerAscii(
 			unsigned char Character)
@@ -508,6 +603,13 @@ extern "C" {
 		return Character;
 	}
 
+	/**
+	 * @brief Creates a new, null-terminated heap-allocated string from a character range.
+	 * @internal
+	 * @param String A pointer to the source character array.
+	 * @param Length The number of characters to copy from the source.
+	 * @return A pointer to the new heap-allocated string, or NULL on failure. The caller must free this memory.
+	 */
 	static inline char*
 		_FC_StringDuplicateRange(
 			_In_reads_(Length) const char* String,
@@ -523,10 +625,18 @@ extern "C" {
 		return Output;
 	}
 
-	//
-	// Unicode-aware (UTF-8) string lowercasing function.
-	// Returns a new, heap-allocated lowercase string. The caller must free it.
-	//
+	/**
+	 * @brief Converts a UTF-8 encoded string to its lowercase equivalent.
+	 *
+	 * This function handles multi-byte UTF-8 characters correctly by converting the
+	 * string to UTF-16, using the Windows `CharLowerW` function, and then converting
+	 * it back to a new UTF-8 string.
+	 * @internal
+	 * @param Source A pointer to the source UTF-8 string.
+	 * @param SourceLength The length in bytes of the source string.
+	 * @param[out] NewLength A pointer to a size_t that will receive the length of the new lowercase string.
+	 * @return A pointer to a new, heap-allocated, null-terminated lowercase UTF-8 string, or NULL on failure. The caller must free this memory.
+	 */
 	static inline char*
 		_FC_StringToLowerUnicode(
 			_In_reads_(SourceLength) const char* Source,
@@ -616,6 +726,16 @@ extern "C" {
 		return DestBuffer;
 	}
 
+	/**
+	 * @brief Computes a hash for a character string using a simple algorithm (djb2-like).
+	 *
+	 * This function can optionally ignore case and whitespace for ASCII strings.
+	 * @internal
+	 * @param String The string to hash.
+	 * @param Length The length of the string.
+	 * @param Flags A bitmask of comparison flags (FC_IGNORE_CASE, FC_IGNORE_WS).
+	 * @return The computed 32-bit hash value.
+	 */
 	static inline UINT
 		_FC_ComputeHash(
 			_In_reads_(Length) const char* String,
@@ -638,6 +758,19 @@ extern "C" {
 		return Hash;
 	}
 
+	/**
+	 * @brief Computes a hash for a line, handling Unicode case-insensitivity if required.
+	 *
+	 * This is a wrapper around `_FC_ComputeHash`. If Unicode case-insensitivity is
+	 * requested, it first converts the line to lowercase using the Unicode-aware
+	 * `_FC_StringToLowerUnicode` function before hashing. Otherwise, it calls
+	 * `_FC_ComputeHash` directly.
+	 * @internal
+	 * @param String The line's text to hash.
+	 * @param Length The length of the line's text.
+	 * @param Config A pointer to the main comparison configuration.
+	 * @return The computed hash value for the line.
+	 */
 	static inline UINT
 		_FC_HashLine(
 			_In_reads_(Length) const char* String,
@@ -666,6 +799,14 @@ extern "C" {
 		return _FC_ComputeHash(String, Length, Flags);
 	}
 
+	/**
+	 * @brief Frees all memory associated with the lines stored in a line buffer.
+	 *
+	 * This iterates through each `_FC_LINE` in the buffer, frees the `Text` pointer
+	 * for each line, and then frees the buffer's main data block itself.
+	 * @internal
+	 * @param pLineBuffer A pointer to the `_FC_BUFFER` containing `_FC_LINE` elements.
+	 */
 	static void
 		_FC_FreeLineBufferContents(_Inout_ _FC_BUFFER* pLineBuffer)
 	{
@@ -680,6 +821,19 @@ extern "C" {
 		_FC_BufferFree(pLineBuffer);
 	}
 
+	/**
+	 * @brief Compares two buffers of _FC_LINE structures to see if they are identical.
+	 *
+	 * The comparison logic is optimized. It first checks for different line counts.
+	 * Then, it compares the pre-computed hash of each line. A full memory comparison
+	 * of the line text is only performed as a final step if the hashes match and the
+	 * comparison mode is both case-sensitive and whitespace-sensitive.
+	 * @internal
+	 * @param pBufferA A pointer to the first line buffer.
+	 * @param pBufferB A pointer to the second line buffer.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return FC_OK if the line arrays are identical, FC_DIFFERENT otherwise.
+	 */
 	static FC_RESULT
 		_FC_CompareLineArrays(
 			_In_ const _FC_BUFFER* pBufferA, // Changed type
@@ -723,7 +877,20 @@ extern "C" {
 		return FC_OK;
 	}
 
-
+	/**
+	 * @brief Parses a raw memory buffer into a structured array of lines.
+	 *
+	 * This function iterates through the input buffer, identifying line breaks. For each
+	 * line, it performs normalization based on the `FC_CONFIG` flags (e.g., tab expansion,
+	 * whitespace removal), computes a hash of the normalized text, and stores the result
+	 * as an `_FC_LINE` in the output buffer.
+	 * @internal
+	 * @param Buffer The raw character buffer containing the file's content.
+	 * @param BufferLength The length of the raw buffer.
+	 * @param[out] pLineBuffer The output buffer where `_FC_LINE` structs will be stored.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return FC_OK on success, or FC_ERROR_MEMORY on allocation failure.
+	 */
 	static inline FC_RESULT
 		_FC_ParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
@@ -814,6 +981,15 @@ extern "C" {
 		return FC_OK;
 	}
 
+
+	/**
+	 * @brief Reads the entire contents of a file into a new heap-allocated buffer.
+	 * @internal
+	 * @param Path The wide character path to the file to read.
+	 * @param[out] OutputLength A pointer to a size_t that will receive the number of bytes read.
+	 * @param[out] Result A pointer to an FC_RESULT that will be set to indicate the outcome.
+	 * @return A pointer to a new, null-terminated buffer containing the file's content, or NULL on failure. The caller must free this memory.
+	 */
 	static inline char*
 		_FC_ReadFileContents(
 			_In_z_ const WCHAR* Path,
@@ -895,7 +1071,16 @@ extern "C" {
 		return Buffer;
 	}
 
-
+	/**
+	 * @brief Analyzes a byte buffer to determine if it likely contains text.
+	 *
+	 * This heuristic checks for UTF BOMs and calculates the ratio of printable ASCII
+	 * characters to total characters. A null byte is considered a strong indicator of binary content.
+	 * @internal
+	 * @param Buffer A pointer to the byte buffer to inspect.
+	 * @param BufferLength The length of the buffer in bytes.
+	 * @return TRUE if the buffer content is likely text, FALSE otherwise.
+	 */
 	static inline BOOL
 		_FC_IsProbablyTextBuffer(const BYTE* Buffer, DWORD BufferLength)
 	{
@@ -927,6 +1112,15 @@ extern "C" {
 		return (ratio >= textThreshold);
 	}
 
+	/**
+	 * @brief Reads the beginning of a file to determine if it is likely a text file.
+	 *
+	 * This function opens the specified file, reads the first chunk of data, and uses
+	 * `_FC_IsProbablyTextBuffer` to analyze its content.
+	 * @internal
+	 * @param Path The wide character path to the file to check.
+	 * @return TRUE if the file is likely a text file, FALSE otherwise or on error.
+	 */
 	static inline BOOL
 		_FC_IsProbablyTextFileW(const WCHAR* Path) {
 		HANDLE hFile = CreateFileW(
@@ -966,6 +1160,18 @@ extern "C" {
 		return isText;
 	}
 
+	/**
+	 * @brief Compares two files in text mode.
+	 *
+	 * This function orchestrates the text comparison process. It reads both files,
+	 * parses them into normalized line arrays using `_FC_ParseLines`, and then
+	 * compares the resulting arrays with `_FC_CompareLineArrays`.
+	 * @internal
+	 * @param Path1 The path to the first file.
+	 * @param Path2 The path to the second file.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return An FC_RESULT code indicating the outcome.
+	 */
 	static FC_RESULT
 		_FC_CompareFilesText(
 			_In_z_ const WCHAR* Path1,
@@ -1005,6 +1211,18 @@ extern "C" {
 		return Result;
 	}
 
+	/**
+	 * @brief Compares two files in binary mode.
+	 *
+	 * This function performs a byte-for-byte comparison of two files using memory-mapped I/O
+	 * for efficiency. It first checks if the file sizes are different. If they are the same,
+	 * it maps both files into memory and compares their contents.
+	 * @internal
+	 * @param Path1 The path to the first file.
+	 * @param Path2 The path to the second file.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return An FC_RESULT code indicating the outcome.
+	 */
 	static FC_RESULT
 		_FC_CompareFilesBinary(
 			_In_z_ const WCHAR* Path1,
@@ -1100,6 +1318,18 @@ extern "C" {
 		return Result;
 	}
 
+	/**
+	 * @brief Converts a Win32 path to a canonical NT path and validates it.
+	 *
+	 * This function uses the native `RtlDosPathNameToNtPathName_U_WithStatus` API to
+	 * resolve a DOS-style path into its underlying NT object manager path. It performs
+	 * security checks to reject dangerous paths, such as those pointing directly to
+	 * devices (`\\.\`, `\\?\`) or reserved DOS device names (CON, PRN, etc.).
+	 * @internal
+	 * @param InputPath The Win32-style path to process.
+	 * @param[out] CanonicalPathOut A pointer to a WCHAR* that will receive the new, heap-allocated canonical path string. The caller must free this memory.
+	 * @return TRUE on success, FALSE if the path is invalid, dangerous, or a memory allocation fails.
+	 */
 	static BOOL
 		_FC_ToCanonicalPath(
 			_In_z_ const WCHAR* InputPath,
@@ -1209,7 +1439,12 @@ extern "C" {
 		return success;
 	}
 
-
+	/**
+	 * @brief Converts a UTF-8 encoded string to a new wide (UTF-16) string.
+	 * @internal
+	 * @param Utf8String The null-terminated UTF-8 string to convert.
+	 * @return A pointer to a new, heap-allocated, null-terminated wide string, or NULL on failure. The caller must free this memory.
+	 */
 	static WCHAR* _FC_ConvertUtf8ToWide(const char* Utf8String)
 	{
 		if (Utf8String == NULL) return NULL;
@@ -1232,6 +1467,18 @@ extern "C" {
 		return wideBuffer;
 	}
 
+	/**
+	 * @brief The internal core comparison dispatcher.
+	 *
+	 * This function selects the appropriate comparison strategy (text or binary) based
+	 * on the `Config->Mode`. For `FC_MODE_AUTO`, it uses `_FC_IsProbablyTextFileW` to
+	 * decide which strategy to use.
+	 * @internal
+	 * @param Path1 The canonical path to the first file.
+	 * @param Path2 The canonical path to the second file.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return An FC_RESULT code indicating the outcome.
+	 */
 	static inline FC_RESULT
 		_FC_CompareFilesInternal(
 			_In_z_ const WCHAR* Path1,
@@ -1267,6 +1514,23 @@ extern "C" {
 	// Main Implementation
 	//
 
+
+	/**
+	 * @brief Compares two files using UTF-8 encoded paths.
+	 *
+	 * This is a convenience wrapper function that takes UTF-8 encoded file paths,
+	 * converts them to wide (UTF-16) strings, and then calls the primary `FC_CompareFilesW`
+	 * function to perform the comparison.
+	 *
+	 * @param Path1Utf8 A null-terminated, UTF-8 encoded path to the first file.
+	 * @param Path2Utf8 A null-terminated, UTF-8 encoded path to the second file.
+	 * @param Config A pointer to the comparison configuration structure. This must not be NULL.
+	 *
+	 * @return An FC_RESULT code indicating the outcome of the comparison.
+	 * @retval FC_ERROR_INVALID_PARAM if any of the required pointers are NULL or if the path strings contain invalid UTF-8 sequences.
+	 * @retval FC_ERROR_MEMORY if memory allocation for path conversion fails.
+	 * @retval Other FC_RESULT codes as returned by `FC_CompareFilesW`.
+	 */
 	FC_RESULT
 		FC_CompareFilesUtf8(
 			_In_z_ const char* Path1Utf8,
@@ -1311,6 +1575,25 @@ extern "C" {
 		return Result;
 	}
 
+	/**
+	 * @brief Compares two files using wide (UTF-16) encoded paths. (Primary Function)
+	 *
+	 * This is the main entry point of the library. It takes two file paths and a
+	 * configuration structure, performs path canonicalization and validation, and then
+	 * dispatches to the appropriate internal comparison routine (text or binary)
+	 * based on the configuration. This function supports long file paths.
+	 *
+	 * @param Path1 A null-terminated, wide (UTF-16) encoded path to the first file.
+	 * @param Path2 A null-terminated, wide (UTF-16) encoded path to the second file.
+	 * @param Config A pointer to the comparison configuration structure. This must not be NULL.
+	 *
+	 * @return An FC_RESULT code indicating the outcome of the comparison.
+	 * @retval FC_OK if the files are identical.
+	 * @retval FC_DIFFERENT if the files differ.
+	 * @retval FC_ERROR_INVALID_PARAM if any required pointers are NULL or if the paths are determined to be invalid or unsafe.
+	 * @retval FC_ERROR_IO if a file cannot be read.
+	 * @retval FC_ERROR_MEMORY if a memory allocation fails during the operation.
+	 */
 	FC_RESULT
 		FC_CompareFilesW(
 			_In_z_ const WCHAR* Path1,
