@@ -786,7 +786,7 @@ extern "C" {
 			_FC_BufferInit(&textBuffer, sizeof(char));
 			if (!_FC_BufferAppendRange(&textBuffer, Ptr, LineLength))
 			{
-				// The caller is responsible for freeing the partially filled pLineBuffer.
+				_FC_BufferFree(&textBuffer);             // free on failure
 				return FC_ERROR_MEMORY;
 			}
 
@@ -797,24 +797,30 @@ extern "C" {
 			{
 				const char tab = '\t';
 				const char* spaces = "    ";
-				_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4);
+				if (!_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4))
+				{
+					_FC_BufferFree(&textBuffer);         // free on failure
+					return FC_ERROR_MEMORY;
+				}
 			}
 
 			// Handle whitespace removal if FC_IGNORE_WS IS set.
 			if (Config->Flags & FC_IGNORE_WS)
 			{
 				const char space = ' ';
-				const char tab = '\t'; // Must remove tabs again if they were just added.
+				const char tab = '\t'; // remove tabs too
 
-				// Remove all spaces by replacing them with nothing.
-				_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0);
-				// Remove all tabs by replacing them with nothing.
-				_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0);
+				if (!_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0) ||
+					!_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0))
+				{
+					_FC_BufferFree(&textBuffer);         // free on failure
+					return FC_ERROR_MEMORY;
+				}
 			}
 
 			// 4. Finalize the processed text from the buffer.
 			size_t FinalLength = textBuffer.Count;
-			char* FinalText = _FC_BufferToString(&textBuffer); // Finalizes and returns the data pointer.
+			char* FinalText = _FC_BufferToString(&textBuffer);
 
 			if (FinalText == NULL)
 			{
@@ -826,7 +832,6 @@ extern "C" {
 			_FC_LINE line;
 			line.Text = FinalText;
 			line.Length = FinalLength;
-			// Note: _FC_HashLine no longer needs to check for FC_IGNORE_WS.
 			line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
 
 			if (!_FC_BufferAppend(pLineBuffer, &line))
