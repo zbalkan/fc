@@ -528,6 +528,8 @@ extern "C" {
 		// If the required size is larger than our stack buffer, allocate from the heap.
 		if (WideLength > STACK_BUFFER_SIZE)
 		{
+			if ((size_t)WideLength > SIZE_MAX / sizeof(WCHAR)) // Check for overflow
+				goto cleanup;
 			WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0,
 				(size_t)WideLength * sizeof(WCHAR));
 			if (WideBuffer == NULL)
