@@ -805,6 +805,11 @@ extern "C" {
 			Buffer = _FC_StringDuplicateRange("", 0);
 			goto cleanup;
 		}
+		if (Length > MAXDWORD)
+		{
+			*Result = FC_ERROR_MEMORY; // File too large for a single ReadFile call
+			goto cleanup;
+		}
 
 		Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
 		if (Buffer == NULL)
