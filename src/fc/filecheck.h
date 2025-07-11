@@ -226,24 +226,21 @@ extern "C" {
 			_Inout_ _FC_BUFFER* pBuffer,
 			_In_ size_t additionalCount)
 	{
+		if (additionalCount > SIZE_MAX - pBuffer->Count)
+			return FALSE;
 		if (pBuffer->Count + additionalCount > pBuffer->Capacity)
 		{
 			size_t newCapacity = pBuffer->Capacity > 0 ? pBuffer->Capacity * 2 : 8;
 			if (newCapacity < pBuffer->Count + additionalCount)
-			{
 				newCapacity = pBuffer->Count + additionalCount;
-			}
-
+			if (newCapacity > SIZE_MAX / pBuffer->ElementSize)
+				return FALSE;
 			size_t newSizeInBytes = newCapacity * pBuffer->ElementSize;
 			void* pNewData = pBuffer->pData
 				? HeapReAlloc(GetProcessHeap(), 0, pBuffer->pData, newSizeInBytes)
 				: HeapAlloc(GetProcessHeap(), 0, newSizeInBytes);
-
 			if (pNewData == NULL)
-			{
 				return FALSE;
-			}
-
 			pBuffer->pData = pNewData;
 			pBuffer->Capacity = newCapacity;
 		}
