@@ -173,6 +173,13 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
+
+	static const WCHAR* const g_ReservedDevices[] = {
+		L"CON", L"PRN", L"AUX", L"NUL",
+		L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
+		L"LPT1", L"LPT2", L"LPT3", L"LPT4", L"LPT5", L"LPT6", L"LPT7", L"LPT8", L"LPT9"
+	};
+
 	typedef struct
 	{
 		char* Text;
@@ -1115,15 +1122,9 @@ extern "C" {
 			base++;
 		}
 
-
-		static const WCHAR* ReservedDevices[] = {
-			L"CON", L"PRN", L"AUX", L"NUL",
-			L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
-			L"LPT1", L"LPT2", L"LPT3", L"LPT4", L"LPT5", L"LPT6", L"LPT7", L"LPT8", L"LPT9"
-		};
-		for (int i = 0; i < ARRAYSIZE(ReservedDevices); ++i)
+		for (int i = 0; i < ARRAYSIZE(g_ReservedDevices); ++i)
 		{
-			if (_wcsicmp(base, ReservedDevices[i]) == 0)
+			if (_wcsicmp(base, g_ReservedDevices[i]) == 0)
 			{
 				goto cleanup;
 			}
