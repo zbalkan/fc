@@ -570,11 +570,16 @@ extern "C" {
 			_In_ UINT Flags)
 	{
 		UINT Hash = 0;
+		BOOL const ignoreCase = (Flags & FC_IGNORE_CASE);
+		BOOL const ignoreWs = (Flags & FC_IGNORE_WS);
+
 		for (size_t i = 0; i < Length; ++i)
 		{
 			unsigned char Character = (unsigned char)String[i];
-			if ((Flags & FC_IGNORE_WS) && (Character == ' ' || Character == '\t'))
+			if (ignoreWs && (Character == ' ' || Character == '\t'))
 				continue;
+			if (ignoreCase)
+				Character = _FC_ToLowerAscii(Character);
 			Hash = Hash * 31 + Character;
 		}
 		return Hash;
@@ -588,46 +593,28 @@ extern "C" {
 	{
 		UINT Flags = Config->Flags;
 
-		// If case-insensitive and Unicode, lowercase using Unicode-aware conversion
+		// If case-insensitive and Unicode, we must use the slower, Unicode-aware path.
 		if ((Flags & FC_IGNORE_CASE) && Config->Mode == FC_MODE_TEXT_UNICODE)
 		{
 			size_t LowerLength;
 			char* LowerString = _FC_StringToLowerUnicode(String, Length, &LowerLength);
 			if (LowerString == NULL)
 				return 0; // Fail-safe; hashing 0 for NULL is safe for comparison fallback
+
+			// We pass the original flags, but the string is already lowercase, so
+			// the case-insensitivity path in _FC_ComputeHash will be redundant but harmless.
 			UINT Hash = _FC_ComputeHash(LowerString, LowerLength, Flags);
 			HeapFree(GetProcessHeap(), 0, LowerString);
 			return Hash;
 		}
 
-		// Otherwise, optionally ASCII-lower the input before hashing
-		char* Temp = NULL;
-		const char* Input = String;
-		size_t InputLen = Length;
-
-		if (Flags & FC_IGNORE_CASE)
-		{
-			Temp = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
-			if (Temp == NULL)
-				return 0;
-
-			for (size_t i = 0; i < Length; ++i)
-			{
-				Temp[i] = (char)_FC_ToLowerAscii((unsigned char)String[i]);
-			}
-			Temp[Length] = '\0';
-			Input = Temp;
-		}
-
-		UINT Hash = _FC_ComputeHash(Input, InputLen, Flags);
-
-		if (Temp)
-			HeapFree(GetProcessHeap(), 0, Temp);
-
-		return Hash;
+		// For all other cases (ASCII, or case-sensitive), compute the hash directly.
+		// _FC_ComputeHash now handles ASCII case-insensitivity on the fly.
+		return _FC_ComputeHash(String, Length, Flags);
 	}
 
-	static void _FC_FreeLineBufferContents(_Inout_ _FC_BUFFER* pLineBuffer)
+	static void
+		_FC_FreeLineBufferContents(_Inout_ _FC_BUFFER* pLineBuffer)
 	{
 		for (size_t i = 0; i < pLineBuffer->Count; ++i)
 		{
