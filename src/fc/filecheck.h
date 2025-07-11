@@ -364,7 +364,30 @@ extern "C" {
 		_FC_BUFFER newBuffer;
 		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
 
+		// 1) Count total occurrences to compute final size
+		size_t occurrences = 0;
+		for (size_t idx = firstOccurrence;
+			idx < pBuffer->Count;
+			idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, idx) + oldPatternSize)
+		{
+			if (idx - oldPatternSize >= pBuffer->Count) break;
+			occurrences++;
+		}
+
+		// 2) Pre-reserve capacity, checking for overflow
+		size_t delta_per = (newPatternSize > oldPatternSize)
+			? (newPatternSize - oldPatternSize)
+			: 0;
+		size_t extra = occurrences * delta_per;
+		// Prevent wrap‐around
+		if (pBuffer->Count > SIZE_MAX - extra)
+			goto cleanup;
+		if (!_FC_BufferEnsureCapacity(&newBuffer, pBuffer->Count + extra))
+			goto cleanup;
+
+		// 3) Perform the replace loop
 		size_t read_idx = 0;
+		BOOL  success = TRUE;
 		while (read_idx < pBuffer->Count)
 		{
 			// Match?
@@ -373,12 +396,12 @@ extern "C" {
 					pOldPattern,
 					oldPatternSize * pBuffer->ElementSize) == 0)
 			{
-				if (newPatternSize > 0 && pNewPattern)
+				if (newPatternSize && pNewPattern)
 				{
 					if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
 					{
-						_FC_BufferFree(&newBuffer);
-						return FALSE;    // free on failure
+						success = FALSE;
+						goto cleanup;
 					}
 				}
 				read_idx += oldPatternSize;
@@ -388,8 +411,8 @@ extern "C" {
 				void* pCurrent = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
 				if (!_FC_BufferAppend(&newBuffer, pCurrent))
 				{
-					_FC_BufferFree(&newBuffer);
-					return FALSE;    // free on failure
+					success = FALSE;
+					goto cleanup;
 				}
 				read_idx++;
 			}
@@ -402,15 +425,19 @@ extern "C" {
 			size_t tailCount = pBuffer->Count - read_idx;
 			if (!_FC_BufferAppendRange(&newBuffer, pTail, tailCount))
 			{
-				_FC_BufferFree(&newBuffer);
-				return FALSE;    // <— free on failure
+				success = FALSE;
+				goto cleanup;
 			}
 		}
 
 		// Swap in the new data, freeing the old
 		_FC_BufferFree(pBuffer);
 		*pBuffer = newBuffer;
-		return TRUE;
+
+	cleanup:
+		if (!success)
+			_FC_BufferFree(&newBuffer);
+		return success;
 	}
 
 	// Convenience function to null-terminate and return a character buffer as a string.
