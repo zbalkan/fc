@@ -363,7 +363,6 @@ extern "C" {
 		size_t last_match_end = 0;
 		_FC_BUFFER newBuffer;
 		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
-		BOOL success = TRUE;
 
 		// Single pass: find next match, copy chunk before it, then copy replacement.
 		while ((read_idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, read_idx)) != (size_t)-1)
@@ -375,8 +374,8 @@ extern "C" {
 				size_t chunkCount = read_idx - last_match_end;
 				if (!_FC_BufferAppendRange(&newBuffer, pChunkStart, chunkCount))
 				{
-					success = FALSE;
-					goto cleanup;
+					_FC_BufferFree(&newBuffer);
+					return FALSE;
 				}
 			}
 
@@ -385,8 +384,8 @@ extern "C" {
 			{
 				if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
 				{
-					success = FALSE;
-					goto cleanup;
+					_FC_BufferFree(&newBuffer);
+					return FALSE;
 				}
 			}
 
@@ -398,29 +397,27 @@ extern "C" {
 		// If no matches were found at all, we can exit early.
 		if (last_match_end == 0)
 		{
+			_FC_BufferFree(&newBuffer); // Free the unused new buffer
 			return TRUE; // No replacements were made.
 		}
 
 		// Append the remainder of the buffer after the last match.
 		if (last_match_end < pBuffer->Count)
 		{
-			void* pTail = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
+			void* pTailStart = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
 			size_t tailCount = pBuffer->Count - last_match_end;
-			if (!_FC_BufferAppendRange(&newBuffer, pTail, tailCount))
+			if (!_FC_BufferAppendRange(&newBuffer, pTailStart, tailCount))
 			{
-				success = FALSE;
-				goto cleanup;
+				_FC_BufferFree(&newBuffer);
+				return FALSE;
 			}
 		}
 
-		// Swap in the new data, freeing the old
+		// Swap the old buffer with the new one.
 		_FC_BufferFree(pBuffer);
 		*pBuffer = newBuffer;
 
-	cleanup:
-		if (!success)
-			_FC_BufferFree(&newBuffer);
-		return success;
+		return TRUE;
 	}
 
 	// Convenience function to null-terminate and return a character buffer as a string.
