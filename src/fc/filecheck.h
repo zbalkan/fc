@@ -1016,15 +1016,20 @@ extern "C" {
 		if (Result == FC_DIFFERENT && Config->Output != NULL)
 		{
 			char Message[64] = "Binary diff at offset 0x";
-			_snprintf_s(
+			int charsWritten;
+
+			charsWritten = _snprintf_s(
 				Message,
 				sizeof(Message),
-				_TRUNCATE, // Ensures the buffer is not overrun
+				_TRUNCATE,
 				"Binary diff at offset 0x%zx",
 				FirstDifference
 			);
 
-			Config->Output(Config->UserData, Message, -1, -1);
+			if (charsWritten > 0)
+			{
+				Config->Output(Config->UserData, Message, -1, -1);
+			}
 		}
 
 		UnmapViewOfFile(Buffer1);
@@ -1037,7 +1042,7 @@ extern "C" {
 	}
 
 	static BOOL
-		_FC_PreparePath(
+		_FC_ToCanonicalPath(
 			_In_z_ const WCHAR* InputPath,
 			_Outptr_result_nullonfailure_ WCHAR** CanonicalPathOut)
 	{
@@ -1142,7 +1147,18 @@ extern "C" {
 
 		wcsncpy_s(outPath, len, NtPath.Buffer, _TRUNCATE);
 		RtlFreeUnicodeString(&NtPath);
-
+		if(outPath == NULL)
+		{
+			// Memory allocation failed
+			return FALSE;
+		}
+		if(outPath != NULL && outPath[0] == L'\0')
+		{
+			// If the path is empty after conversion, treat it as invalid.
+			HeapFree(GetProcessHeap(), 0, outPath);
+			return FALSE;
+		}
+		// Step 6: Return the canonical path
 		*CanonicalPathOut = outPath;
 		return TRUE;
 	}
@@ -1262,8 +1278,8 @@ extern "C" {
 		}
 
 		// Path preparation
-		if (!_FC_PreparePath(Path1, &CanonicalPath1) ||
-			!_FC_PreparePath(Path2, &CanonicalPath2))
+		if (!_FC_ToCanonicalPath(Path1, &CanonicalPath1) ||
+			!_FC_ToCanonicalPath(Path2, &CanonicalPath2))
 		{
 			Result = FC_ERROR_INVALID_PARAM;
 			goto cleanup;
