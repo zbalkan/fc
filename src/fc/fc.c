@@ -55,6 +55,7 @@ PrintUsage(void)
 	printf("(If neither L, B or U is specified, auto-detect is used)\n");
 }
 
+_Success_(return == TRUE)
 static BOOL
 ParseNumericOption(
 	_In_z_ const WCHAR* OptionString,
@@ -62,6 +63,7 @@ ParseNumericOption(
 	_In_ UINT MinValue,
 	_In_ UINT MaxValue)
 {
+	*Value = 0;
 	WCHAR* EndPtr;
 	errno = 0;
 	unsigned long ParsedValue = wcstoul(OptionString, &EndPtr, 10);
