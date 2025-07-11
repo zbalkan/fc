@@ -1229,15 +1229,12 @@ extern "C" {
 
 		if (!Path1Utf8 || !Path2Utf8 || !Config || !Config->Output)
 		{
-			Result = FC_ERROR_INVALID_PARAM;
-			goto cleanup;
+			return FC_ERROR_INVALID_PARAM; // No cleanup needed, return directly.
 		}
 
-		// Convert paths
+		// Convert paths, checking each one immediately.
 		WidePath1 = _FC_ConvertUtf8ToWide(Path1Utf8);
-		WidePath2 = _FC_ConvertUtf8ToWide(Path2Utf8);
-
-		if (WidePath1 == NULL || WidePath2 == NULL)
+		if (WidePath1 == NULL)
 		{
 			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
 				? FC_ERROR_INVALID_PARAM
@@ -1245,13 +1242,19 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Chain to the primary public API, not the internal one.
-		// FC_CompareFilesW will handle path validation and the actual comparison.
+		WidePath2 = _FC_ConvertUtf8ToWide(Path2Utf8);
+		if (WidePath2 == NULL)
+		{
+			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
+				? FC_ERROR_INVALID_PARAM
+				: FC_ERROR_MEMORY;
+			goto cleanup;
+		}
+
+		// Chain to the primary public API.
 		Result = FC_CompareFilesW(WidePath1, WidePath2, Config);
 
 	cleanup:
-		// This function owns the wide paths, so it frees them here.
-		// There is no more double-free bug.
 		if (WidePath1) HeapFree(GetProcessHeap(), 0, WidePath1);
 		if (WidePath2) HeapFree(GetProcessHeap(), 0, WidePath2);
 
