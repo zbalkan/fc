@@ -1153,37 +1153,30 @@ extern "C" {
 
 		*CanonicalPathOut = NULL;
 
+		UNICODE_STRING NtPath = { 0 };
+		WCHAR* outPath = NULL;
+		BOOL ntPathInitialized = FALSE;
+		BOOL success = FALSE;
+
 		// Step 1: Check if input path type is acceptable
 		RTL_PATH_TYPE PathType = RtlDetermineDosPathNameType_U(InputPath);
 		if (PathType == RtlPathTypeUnknown ||
 			PathType == RtlPathTypeLocalDevice ||
 			PathType == RtlPathTypeRootLocalDevice)
 		{
-			return FALSE; // reject raw \\.\ or \\?\ paths
+			goto cleanup; // reject raw \\.\ or \\?\ paths
 		}
 
 		// Step 2: Convert to full NT path via native call
-		// TODO: Check if the path is already in NT format, if not, convert it
-		// Note: RtlDosPathNameToRelativeNtPathName_U_WithStatus returns a relative NT path,
-		// but we can use it to validate and canonicalize the input.
-		// It will also handle long paths correctly.
-		// Sample input: "C:\path\to\file.txt" or "\\?\C:\path\to\file.txt"
-		// Sample output: "\??\C:\path\to\file.txt" or "\Device\HarddiskVolume1\path\to\file.txt"
-		// Check PathType variable's value to ensure we handle it correctly.
-		if (PathType == RtlPathTypeUncAbsolute ||
+		if (!(PathType == RtlPathTypeUncAbsolute ||
 			PathType == RtlPathTypeDriveAbsolute ||
 			PathType == RtlPathTypeDriveRelative ||
 			PathType == RtlPathTypeRooted ||
-			PathType == RtlPathTypeRelative)
+			PathType == RtlPathTypeRelative))
 		{
-			// These are acceptable, proceed to conversion
-		}
-		else
-		{
-			return FALSE; // reject other types like UNC relative, etc.
+			goto cleanup; // reject other types like UNC relative, etc.
 		}
 
-		UNICODE_STRING NtPath;
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
@@ -1192,28 +1185,19 @@ extern "C" {
 
 		if (!NT_SUCCESS(Status))
 		{
-			return FALSE;
+			goto cleanup;
 		}
+		ntPathInitialized = TRUE;
 
 		// Step 3: Detect risky NT path prefixes
 		if (NtPath.Length >= 8 * sizeof(WCHAR))
 		{
 			const WCHAR* s = NtPath.Buffer;
-
-			// Block named pipes
-			if ((NtPath.Length >= 36 * sizeof(WCHAR) &&
-				_wcsnicmp(s, L"\\Device\\NamedPipe\\", 18) == 0) ||
-				_wcsnicmp(s, L"\\??\\PIPE\\", 9) == 0)
+			if ((NtPath.Length >= 36 * sizeof(WCHAR) && _wcsnicmp(s, L"\\Device\\NamedPipe\\", 18) == 0) ||
+				_wcsnicmp(s, L"\\??\\PIPE\\", 9) == 0 ||
+				_wcsnicmp(s, L"\\Device\\", 8) == 0)
 			{
-				RtlFreeUnicodeString(&NtPath);
-				return FALSE;
-			}
-
-			// Block all \Device\... raw paths
-			if (_wcsnicmp(s, L"\\Device\\", 8) == 0)
-			{
-				RtlFreeUnicodeString(&NtPath);
-				return FALSE;
+				goto cleanup;
 			}
 		}
 
@@ -1232,32 +1216,40 @@ extern "C" {
 		{
 			if (_wcsicmp(base, ReservedDevices[i]) == 0)
 			{
-				RtlFreeUnicodeString(&NtPath);
-				return FALSE;
+				goto cleanup;
 			}
 		}
 
-		// Step 5: Allocate copy of canonical path
+		// Step 5: Allocate and copy canonical path
 		size_t len = (NtPath.Length / sizeof(WCHAR)) + 1;
-		WCHAR* outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
+		outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
 		if (!outPath)
 		{
-			RtlFreeUnicodeString(&NtPath);
-			return FALSE;
+			goto cleanup;
 		}
 
-		wcsncpy_s(outPath, len, NtPath.Buffer, _TRUNCATE);
-		RtlFreeUnicodeString(&NtPath);
-		if (outPath[0] == L'\0')
+		errno_t err = wcsncpy_s(outPath, len, NtPath.Buffer, _TRUNCATE);
+		if (err != 0 || outPath[0] == L'\0')
 		{
-			// If the path is empty after conversion, treat it as invalid.
-			HeapFree(GetProcessHeap(), 0, outPath);
-			return FALSE;
+			goto cleanup;
 		}
-		// Step 6: Return the canonical path
+
+		// Step 6: Success - set output parameter
 		*CanonicalPathOut = outPath;
-		return TRUE;
+		success = TRUE;
+
+	cleanup:
+		if (ntPathInitialized)
+		{
+			RtlFreeUnicodeString(&NtPath);
+		}
+		if (!success && outPath)
+		{
+			HeapFree(GetProcessHeap(), 0, outPath);
+		}
+		return success;
 	}
+
 
 	static WCHAR* _FC_ConvertUtf8ToWide(const char* Utf8String)
 	{
