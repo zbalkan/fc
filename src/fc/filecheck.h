@@ -1181,7 +1181,6 @@ extern "C" {
 
 		if (!NT_SUCCESS(Status))
 		{
-			RtlFreeUnicodeString(&NtPath);
 			return FALSE;
 		}
 
