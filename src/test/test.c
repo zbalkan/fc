@@ -594,6 +594,121 @@ static void Test_ErrorNullConfigPointer(const WCHAR* baseDir)
 	const char* utf = "X\n";
 	ASSERT_TRUE(FC_CompareFilesUtf8(utf, utf, NULL) == FC_ERROR_INVALID_PARAM);
 }
+static void Test_ErrorNonExistentFile(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"existent.txt", p1);
+	WRITE_STR_FILE(p1, "some data");
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	// Path that does not exist
+	ConvertWideToUtf8OrExit(L"C:\\this\\path\\should\\not\\exist\\ever.txt", u2, UTF8_BUFFER_SIZE);
+
+	FC_CONFIG cfg = { 0 };
+	cfg.Output = TestCallback;
+	cfg.Mode = FC_MODE_AUTO;
+
+	// Comparing an existing file with a non-existing one should result in an I/O error.
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_IO);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_ErrorReservedDeviceName(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"regular_file.txt", p1);
+	WRITE_STR_FILE(p1, "data");
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	// "CON" is a reserved device name and should be rejected by the canonicalization.
+	ConvertWideToUtf8OrExit(L"CON", u2, UTF8_BUFFER_SIZE);
+
+	FC_CONFIG cfg = { 0 };
+	cfg.Output = TestCallback;
+	cfg.Mode = FC_MODE_AUTO;
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_ErrorRawDevicePath(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"another_file.txt", p1);
+	WRITE_STR_FILE(p1, "data");
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	// Raw device paths should be rejected for security.
+	ConvertWideToUtf8OrExit(L"\\\\.\\PhysicalDrive0", u2, UTF8_BUFFER_SIZE);
+
+	FC_CONFIG cfg = { 0 };
+	cfg.Output = TestCallback;
+	cfg.Mode = FC_MODE_AUTO;
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_ErrorEmptyPath(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"some_file.txt", p1);
+	WRITE_STR_FILE(p1, "data");
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	// An empty path is invalid.
+	u2[0] = '\0';
+
+	FC_CONFIG cfg = { 0 };
+	cfg.Output = TestCallback;
+	cfg.Mode = FC_MODE_AUTO;
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_ErrorNullOutputCallback(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+
+	ConcatPath(baseDir, L"file_for_null_callback.txt", p1);
+	WRITE_STR_FILE(p1, "data");
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+
+	FC_CONFIG cfg = { 0 };
+	cfg.Mode = FC_MODE_AUTO;
+	cfg.Output = NULL; // The Output callback is mandatory.
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u1, &cfg) == FC_ERROR_INVALID_PARAM);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, u1);
+}
 
 int wmain(void)
 {
@@ -624,6 +739,13 @@ int wmain(void)
 	Test_UTF8WrapperInvalidPath(testDir);
 	Test_ErrorNullPathPointer(testDir);
 	Test_ErrorNullConfigPointer(testDir);
+	Test_ErrorNullPathPointer(testDir);
+	Test_ErrorNullConfigPointer(testDir);
+	Test_ErrorNonExistentFile(testDir);
+	Test_ErrorReservedDeviceName(testDir);
+	Test_ErrorRawDevicePath(testDir);
+	Test_ErrorEmptyPath(testDir);
+	Test_ErrorNullOutputCallback(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteConsoleW(hConsole, L"\n\n", 2, NULL, NULL);
