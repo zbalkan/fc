@@ -361,69 +361,118 @@ extern "C" {
 			_In_opt_ const void* pNewPattern,
 			_In_ size_t newPatternSize)
 	{
+		// 1. Defensive Input Validation
+		if (!pBuffer || !pOldPattern)
+			return FALSE;
+		if (newPatternSize > 0 && !pNewPattern)
+			return FALSE;
+		if (pBuffer->Count > 0 && !pBuffer->pData) // Check for inconsistent buffer state
+			return FALSE;
+		if (pBuffer->ElementSize == 0 && pBuffer->Count > 0) // Reject degenerate buffer
+			return FALSE;
+
 		if (oldPatternSize == 0 || pBuffer->Count == 0)
+			return TRUE;
+
+		size_t count = 0;
+		// Pass 1: count occurrences
+		for (size_t i = 0; i + oldPatternSize <= pBuffer->Count; )
 		{
-			return TRUE; // Nothing to replace.
+			if (memcmp((char*)pBuffer->pData + i * pBuffer->ElementSize,
+				pOldPattern,
+				oldPatternSize * pBuffer->ElementSize) == 0)
+			{
+				if (count == SIZE_MAX)
+					return FALSE; // Too many occurrences to count
+				count++;
+				i += oldPatternSize;
+			}
+			else
+			{
+				i++;
+			}
 		}
 
-		size_t read_idx = 0;
-		size_t last_match_end = 0;
-		_FC_BUFFER newBuffer;
-		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
+		if (count == 0)
+			return TRUE;
 
-		// Single pass: find next match, copy chunk before it, then copy replacement.
-		while ((read_idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, read_idx)) != (size_t)-1)
+		// 2. Safely calculate new buffer size using pure unsigned arithmetic
+		size_t newCount;
+		if (newPatternSize >= oldPatternSize) {
+			// Growth path
+			size_t delta = newPatternSize - oldPatternSize;
+			if (delta > 0 && count > (SIZE_MAX - pBuffer->Count) / delta)
+				return FALSE; // Overflow
+			newCount = pBuffer->Count + count * delta;
+		}
+		else {
+			// Shrink path
+			size_t delta = oldPatternSize - newPatternSize;
+			size_t totalShrink = count * delta;
+			if (totalShrink > pBuffer->Count)
+				return FALSE;  // Logic error: cannot shrink more than the buffer size
+			newCount = pBuffer->Count - totalShrink;
+		}
+
+		_FC_BUFFER newBuf;
+		_FC_BufferInit(&newBuf, pBuffer->ElementSize);
+
+		// Handle the edge case of replacing with nothing, resulting in an empty buffer
+		if (newCount == 0)
 		{
-			// Append the chunk of data from the end of the last match to the start of this one.
-			if (read_idx > last_match_end)
+			_FC_BufferFree(pBuffer);
+			*pBuffer = newBuf; // newBuf is already an empty, valid buffer
+			return TRUE;
+		}
+
+		// 3. Check for allocation size overflow before allocating
+		if (pBuffer->ElementSize > 0 && newCount > SIZE_MAX / pBuffer->ElementSize)
+			return FALSE;
+		size_t newSizeInBytes = newCount * pBuffer->ElementSize;
+
+		newBuf.pData = HeapAlloc(GetProcessHeap(), 0, newSizeInBytes);
+		if (!newBuf.pData)
+			return FALSE;
+		newBuf.Capacity = newCount;
+
+		// Pass 2: build the new buffer
+		size_t read_idx = 0, write_idx = 0;
+		const size_t elemSize = pBuffer->ElementSize;
+		char* const dstBase = (char*)newBuf.pData;
+		const char* const srcBase = (char*)pBuffer->pData;
+
+		while (read_idx < pBuffer->Count)
+		{
+			if (read_idx + oldPatternSize <= pBuffer->Count &&
+				memcmp(srcBase + read_idx * elemSize, pOldPattern, oldPatternSize * elemSize) == 0)
 			{
-				void* pChunkStart = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
-				size_t chunkCount = read_idx - last_match_end;
-				if (!_FC_BufferAppendRange(&newBuffer, pChunkStart, chunkCount))
+				if (newPatternSize > 0)
 				{
-					_FC_BufferFree(&newBuffer);
-					return FALSE;
+					if (write_idx + newPatternSize > newBuf.Capacity) goto cleanup;
+					memcpy(dstBase + write_idx * elemSize, pNewPattern, newPatternSize * elemSize);
+					write_idx += newPatternSize;
 				}
+				read_idx += oldPatternSize;
 			}
-
-			// Append the new pattern.
-			if (newPatternSize > 0 && pNewPattern != NULL)
+			else
 			{
-				if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
-				{
-					_FC_BufferFree(&newBuffer);
-					return FALSE;
-				}
-			}
-
-			// Move read index past the old pattern.
-			read_idx += oldPatternSize;
-			last_match_end = read_idx;
-		}
-
-		// If no matches were found at all, we can exit early.
-		if (last_match_end == 0)
-		{
-			return TRUE; // No replacements were made.
-		}
-
-		// Append the remainder of the buffer after the last match.
-		if (last_match_end < pBuffer->Count)
-		{
-			void* pTailStart = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
-			size_t tailCount = pBuffer->Count - last_match_end;
-			if (!_FC_BufferAppendRange(&newBuffer, pTailStart, tailCount))
-			{
-				_FC_BufferFree(&newBuffer);
-				return FALSE;
+				if (write_idx + 1 > newBuf.Capacity) goto cleanup;
+				memcpy(dstBase + write_idx * elemSize, srcBase + read_idx * elemSize, elemSize);
+				write_idx++;
+				read_idx++;
 			}
 		}
+		newBuf.Count = write_idx;
 
-		// Swap the old buffer with the new one.
-		_FC_BufferFree(pBuffer);
-		*pBuffer = newBuffer;
-
+		// Swap in the new buffer
+		HeapFree(GetProcessHeap(), 0, pBuffer->pData);
+		*pBuffer = newBuf;
 		return TRUE;
+
+	cleanup:
+		// This cleanup path is a safeguard against logic errors in the write loop
+		HeapFree(GetProcessHeap(), 0, newBuf.pData);
+		return FALSE;
 	}
 
 	// Convenience function to null-terminate and return a character buffer as a string.
