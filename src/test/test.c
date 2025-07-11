@@ -44,6 +44,24 @@ static void Throw(_In_z_ const WCHAR* msg, _In_opt_z_ const WCHAR* path)
 	ExitProcess(1);
 }
 
+
+inline static WCHAR* AllocWcharPath()
+{
+	WCHAR* ret = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
+	if (!ret) {
+		Throw(L"Test setup failed: HeapAlloc", NULL);
+	}
+	return ret;
+}
+inline static char* AllocCharPath()
+{
+	char* ret = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(char));
+	if (!ret) {
+		Throw(L"Test setup failed: HeapAlloc", NULL);
+	}
+	return ret;
+}
+
 static BOOL WriteDataFile(_In_z_ const WCHAR* path, _In_reads_(size) const void* data, _In_ DWORD size)
 {
 	HANDLE h = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -57,11 +75,7 @@ static void MakePath(
 	_In_z_ const WCHAR* name,
 	_Out_writes_z_(MAX_LONG_PATH) WCHAR* out)
 {
-	WCHAR* ext = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	if (ext == NULL)
-	{
-		Throw(L"MakePath failed: HeapAlloc", NULL);
-	}
+	WCHAR* ext =  AllocWcharPath();
 
 	if (FAILED(StringCchCopyW(ext, MAX_LONG_PATH, LONG_PATH_PREFIX)) ||
 		FAILED(StringCchCatW(ext, MAX_LONG_PATH, baseDir)) ||
@@ -107,18 +121,17 @@ static void ConvertWideToUtf8OrExit(_In_z_ const WCHAR* wp, char* buf, int sz)
 	if (n <= 0 || n > sz) Throw(L"Conv fail", wp);
 }
 
+/*
+	Tests start here.
+
+*/
+
 static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"ascii_id1.txt", p1);
 	MakePath(baseDir, L"ascii_id2.txt", p2);
@@ -137,16 +150,10 @@ static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 
 static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"ascii_diff1.txt", p1);
 	MakePath(baseDir, L"ascii_diff2.txt", p2);
@@ -165,16 +172,10 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 }
 static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"case1.txt", p1);
 	MakePath(baseDir, L"case2.txt", p2);
@@ -193,16 +194,10 @@ static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 }
 static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"case1.txt", p1);
 	MakePath(baseDir, L"case2.txt", p2);
@@ -222,16 +217,10 @@ static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 }
 static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"ws1.txt", p1);
 	MakePath(baseDir, L"ws2.txt", p2);
@@ -251,16 +240,10 @@ static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 }
 static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"ws1.txt", p1);
 	MakePath(baseDir, L"ws2.txt", p2);
@@ -280,16 +263,10 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 }
 static void Test_Tabs_Expanded(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"tab1.txt", p1);
 	MakePath(baseDir, L"tab2.txt", p2);
@@ -309,16 +286,10 @@ static void Test_Tabs_Expanded(const WCHAR* baseDir)
 }
 static void Test_Tabs_Raw(const WCHAR* baseDir)
 {
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"tab1.txt", p1);
 	MakePath(baseDir, L"tab2.txt", p2);
@@ -341,16 +312,10 @@ static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
 {
 	// Identical UTF-8 Unicode content
 	const char* utf8 = "cafÃ©\n"; // "café"
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"unicode_u8_1.txt", p1);
 	MakePath(baseDir, L"unicode_u8_2.txt", p2);
@@ -373,16 +338,10 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 	// Differ by diacritic
 	const char* a = "cafe\n";
 	const char* b = "cafÃ©\n"; // "café"
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"unicode_diac1.txt", p1);
 	MakePath(baseDir, L"unicode_diac2.txt", p2);
@@ -402,16 +361,10 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 {
 	const char* content = "Line1 😃\nLine2 🚀\n"; // emoji in UTF-8
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"unicode_emoji1.txt", p1);
 	MakePath(baseDir, L"unicode_emoji2.txt", p2);
@@ -433,16 +386,10 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	// BOM present vs absent
 	const unsigned char bom[] = { 0xEF,0xBB,0xBF };
 	const char* text = "Hello\n";
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"bom1.txt", p1);
 	MakePath(baseDir, L"bom2.txt", p2);
@@ -467,16 +414,10 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 static void Test_BinaryExactMatch(const WCHAR* baseDir)
 {
 	const unsigned char data[] = { 0x00,0xFF,0x7F,0x80 };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"bin1.dat", p1);
 	MakePath(baseDir, L"bin2.dat", p2);
@@ -497,16 +438,10 @@ static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 {
 	unsigned char d1[] = { 1,2,3,4,5 };
 	unsigned char d2[] = { 1,2,99,4,5 };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"bin_mid1.dat", p1);
 	MakePath(baseDir, L"bin_mid2.dat", p2);
@@ -527,16 +462,10 @@ static void Test_BinarySizeDiff(const WCHAR* baseDir)
 {
 	unsigned char d1[] = { 1,2,3 };
 	unsigned char d2[] = { 1,2,3,4 };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"bin_sz1.dat", p1);
 	MakePath(baseDir, L"bin_sz2.dat", p2);
@@ -558,16 +487,10 @@ static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
 	// ASCII text file and a binary file
 	const char* text = "Hello\n";
 	unsigned char bin[] = { 0x00,0x01,0x02 };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"auto_text.txt", p1);
 	MakePath(baseDir, L"auto_bin.dat", p2);
@@ -589,16 +512,10 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	// UTF-8 text file and a binary file
 	const char* utf8 = "cafÃ©\n";
 	unsigned char bin[] = { 0xAA,0xBB };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 =  AllocWcharPath();
+	WCHAR* p2 =  AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"auto_unicode.txt", p1);
 	MakePath(baseDir, L"auto_bin2.dat", p2);
@@ -615,20 +532,15 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
+
 static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 {
 	// binary file vs empty file
 	unsigned char bin[] = { 0xDE,0xAD,0xBE,0xEF };
-	WCHAR* p1 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	WCHAR* p2 = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
-	char* u1 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-	char* u2 = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * 4);
-
-	// Always check for allocation failure in production code.
-	if (!p1 || !p2 || !u1 || !u2)
-	{
-		Throw(L"Test setup failed: HeapAlloc", NULL);
-	}
+	WCHAR* p1 = AllocWcharPath();
+	WCHAR* p2 = AllocWcharPath();
+	char* u1 = AllocCharPath();
+	char* u2 = AllocCharPath();
 
 	MakePath(baseDir, L"auto_bin3.dat", p1);
 	MakePath(baseDir, L"auto_empty.bin", p2);
