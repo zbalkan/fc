@@ -170,7 +170,7 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
+static void Test_CaseSensitivityWithSensitive(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -192,7 +192,7 @@ static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
+static void Test_CaseSensitivityWithInsensitive(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -215,7 +215,7 @@ static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
+static void Test_WhitespaceWithSensitive(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -238,7 +238,7 @@ static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
+static void Test_WhitespaceWithInsensitive(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -261,7 +261,7 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_Tabs_Expanded(const WCHAR* baseDir)
+static void Test_TabsWithExpanded(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -284,7 +284,7 @@ static void Test_Tabs_Expanded(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 	HeapFree(GetProcessHeap(), 0, u2);
 }
-static void Test_Tabs_Raw(const WCHAR* baseDir)
+static void Test_TabsWithRaw(const WCHAR* baseDir)
 {
 	WCHAR* p1 =  AllocWcharPath();
 	WCHAR* p2 =  AllocWcharPath();
@@ -604,12 +604,12 @@ int wmain(void)
 
 	Test_TextAsciiIdentical(testDir);
 	Test_TextAsciiDifferentContent(testDir);
-	Test_CaseSensitivity_Sensitive(testDir);
-	Test_CaseSensitivity_Insensitive(testDir);
-	Test_Whitespace_Sensitive(testDir);
-	Test_Whitespace_Insensitive(testDir);
-	Test_Tabs_Expanded(testDir);
-	Test_Tabs_Raw(testDir);
+	Test_CaseSensitivityWithSensitive(testDir);
+	Test_CaseSensitivityWithInsensitive(testDir);
+	Test_WhitespaceWithSensitive(testDir);
+	Test_WhitespaceWithInsensitive(testDir);
+	Test_TabsWithExpanded(testDir);
+	Test_TabsWithRaw(testDir);
 	Test_UnicodeUtf8Match(testDir);
 	Test_UnicodeDiacritics(testDir);
 	Test_UnicodeEmojiMultiline(testDir);
