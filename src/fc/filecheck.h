@@ -1227,7 +1227,7 @@ extern "C" {
 		WCHAR* WidePath1 = NULL;
 		WCHAR* WidePath2 = NULL;
 
-		if (Path1Utf8 == NULL || Path2Utf8 == NULL)
+		if (!Path1Utf8 || !Path2Utf8 || !Config || !Config->Output)
 		{
 			Result = FC_ERROR_INVALID_PARAM;
 			goto cleanup;
