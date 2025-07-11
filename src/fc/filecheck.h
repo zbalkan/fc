@@ -637,39 +637,6 @@ extern "C" {
 		_FC_BufferFree(pLineBuffer);
 	}
 
-	static inline char*
-		_FC_ExpandTabs(
-			_In_reads_(SourceLength) const char* Source,
-			_In_ size_t SourceLength,
-			_Out_ size_t* NewLength)
-	{
-		const char tab = '\t';
-		const char* spaces = "    ";
-		const size_t TabWidth = 4;
-		_FC_BUFFER buffer;
-
-		// 1. Initialize a buffer and copy the source string into it.
-		_FC_BufferInit(&buffer, sizeof(char));
-		if (!_FC_BufferAppendRange(&buffer, Source, SourceLength))
-		{
-			*NewLength = 0;
-			return NULL;
-		}
-
-		// 2. Perform the replacement in-place on the buffer.
-		if (!_FC_BufferReplace(&buffer, &tab, 1, spaces, TabWidth))
-		{
-			// Free on failure
-			_FC_BufferFree(&buffer);
-			*NewLength = 0;
-			return NULL;
-		}
-
-		// 3. Return the result.
-		*NewLength = buffer.Count;
-		return _FC_BufferToString(&buffer);
-	}
-
 	static FC_RESULT
 		_FC_CompareLineArrays(
 			_In_ const _FC_BUFFER* pBufferA, // Changed type
