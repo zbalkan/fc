@@ -1108,10 +1108,18 @@ extern "C" {
 		}
 
 		// Step 4: Reject reserved DOS device names
-		const WCHAR* base = NtPath.Buffer;
-		for (USHORT i = 0; i < NtPath.Length / sizeof(WCHAR); ++i)
-			if (NtPath.Buffer[i] == L'\\')
-				base = &NtPath.Buffer[i + 1];
+		const WCHAR* base = wcsrchr(NtPath.Buffer, L'\\');
+		if (base == NULL)
+		{
+			// No backslash found, the whole path is the base component.
+			base = NtPath.Buffer;
+		}
+		else
+		{
+			// Move past the backslash to the start of the name.
+			base++;
+		}
+
 
 		static const WCHAR* ReservedDevices[] = {
 			L"CON", L"PRN", L"AUX", L"NUL",
