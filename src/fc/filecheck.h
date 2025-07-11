@@ -354,8 +354,6 @@ extern "C" {
 			return TRUE; // Nothing to replace.
 		}
 
-		// --- Pass 1 (and only pass): Find and Replace ---
-
 		// First, check if any occurrences exist at all. If not, we can exit immediately.
 		size_t firstOccurrence = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, 0);
 		if (firstOccurrence == (size_t)-1)
@@ -363,45 +361,55 @@ extern "C" {
 			return TRUE; // No replacements needed.
 		}
 
-		// A temporary buffer to build the new content.
 		_FC_BUFFER newBuffer;
 		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
-		// We can't know the final size yet, so we let it grow dynamically.
 
 		size_t read_idx = 0;
 		while (read_idx < pBuffer->Count)
 		{
-			// Check for a match at the current position.
+			// Match?
 			if (read_idx + oldPatternSize <= pBuffer->Count &&
-				memcmp((char*)pBuffer->pData + (read_idx * pBuffer->ElementSize), pOldPattern, oldPatternSize * pBuffer->ElementSize) == 0)
+				memcmp((char*)pBuffer->pData + (read_idx * pBuffer->ElementSize),
+					pOldPattern,
+					oldPatternSize * pBuffer->ElementSize) == 0)
 			{
-				// Only append if the new pattern has a size AND a valid pointer.
-				if (newPatternSize > 0 && pNewPattern != NULL)
+				if (newPatternSize > 0 && pNewPattern)
 				{
-					_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize);
+					if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
+					{
+						_FC_BufferFree(&newBuffer);
+						return FALSE;    // free on failure
+					}
 				}
-				read_idx += oldPatternSize; // Skip over the old pattern in the source.
+				read_idx += oldPatternSize;
 			}
 			else
 			{
-				// No match. Copy the single element from the source.
 				void* pCurrent = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
-				_FC_BufferAppend(&newBuffer, pCurrent);
+				if (!_FC_BufferAppend(&newBuffer, pCurrent))
+				{
+					_FC_BufferFree(&newBuffer);
+					return FALSE;    // free on failure
+				}
 				read_idx++;
 			}
 		}
 
-		// After the last match, copy the rest of the original buffer.
+		// Copy any tail
 		if (read_idx < pBuffer->Count)
 		{
-			void* pTailStart = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
-			_FC_BufferAppendRange(&newBuffer, pTailStart, pBuffer->Count - read_idx);
+			void* pTail = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
+			size_t tailCount = pBuffer->Count - read_idx;
+			if (!_FC_BufferAppendRange(&newBuffer, pTail, tailCount))
+			{
+				_FC_BufferFree(&newBuffer);
+				return FALSE;    // <— free on failure
+			}
 		}
 
-		// --- Final Step: Swap the old buffer with the new one ---
+		// Swap in the new data, freeing the old
 		_FC_BufferFree(pBuffer);
 		*pBuffer = newBuffer;
-
 		return TRUE;
 	}
 
