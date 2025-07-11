@@ -775,9 +775,11 @@ extern "C" {
 			_Out_ FC_RESULT* Result)
 	{
 		*OutputLength = 0;
-		*Result = FC_ERROR_IO;
+		*Result = FC_OK;
+		HANDLE FileHandle = INVALID_HANDLE_VALUE;
+		char* Buffer = NULL;
 
-		HANDLE FileHandle = CreateFileW(
+		FileHandle = CreateFileW(
 			Path,
 			GENERIC_READ,
 			FILE_SHARE_READ,
@@ -787,61 +789,61 @@ extern "C" {
 			NULL);
 
 		if (FileHandle == INVALID_HANDLE_VALUE)
+		{
+			*Result = FC_ERROR_IO;
 			return NULL;
+		}
 
 		LARGE_INTEGER FileSize;
-		BOOL SizeSuccess = GetFileSizeEx(FileHandle, &FileSize);
-		if (!SizeSuccess) {
-			DWORD Err = GetLastError();
-			CloseHandle(FileHandle);
-			if (Err == ERROR_FILE_NOT_FOUND || Err == ERROR_PATH_NOT_FOUND)
-			{
-				*Result = FC_ERROR_INVALID_PARAM; // File not found
-			}
-			else
-			{
-				*Result = FC_ERROR_IO; // Other IO error
-			}
-			return NULL;
+		if (!GetFileSizeEx(FileHandle, &FileSize))
+		{
+			*Result = FC_ERROR_IO;
+			goto cleanup;
 		}
 
 		if (FileSize.QuadPart > (ULONGLONG)SIZE_MAX - 1)
 		{
-			CloseHandle(FileHandle);
-			return NULL;
+			*Result = FC_ERROR_MEMORY; // File too large
+			goto cleanup;
 		}
 
 		size_t Length = (size_t)FileSize.QuadPart;
 		if (Length == 0)
 		{
-			CloseHandle(FileHandle);
+			// Return a valid, empty, null-terminated string for zero-length files.
 			*Result = FC_OK;
-			return _FC_StringDuplicateRange("", 0);
+			Buffer = _FC_StringDuplicateRange("", 0);
+			goto cleanup;
 		}
 
-		char* Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
+		Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
 		if (Buffer == NULL)
 		{
-			CloseHandle(FileHandle);
 			*Result = FC_ERROR_MEMORY;
-			return NULL;
+			goto cleanup;
 		}
 
 		DWORD BytesRead = 0;
 		if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length)
 		{
-			HeapFree(GetProcessHeap(), 0, Buffer);
-			CloseHandle(FileHandle);
 			*Result = FC_ERROR_IO;
-			return NULL;
+			HeapFree(GetProcessHeap(), 0, Buffer);
+			Buffer = NULL; // Ensure we return NULL on failure
+			goto cleanup;
 		}
 
-		CloseHandle(FileHandle);
 		Buffer[Length] = '\0'; // Add the null terminator
 		*OutputLength = Length;
-		*Result = FC_OK;
+		// *Result is already FC_OK
+
+	cleanup:
+		if (FileHandle != INVALID_HANDLE_VALUE)
+		{
+			CloseHandle(FileHandle);
+		}
 		return Buffer;
 	}
+
 
 	static inline BOOL
 		_FC_IsProbablyTextBuffer(const BYTE* Buffer, DWORD BufferLength)
