@@ -359,75 +359,53 @@ extern "C" {
 			return TRUE; // Nothing to replace.
 		}
 
-		// First, check if any occurrences exist at all. If not, we can exit immediately.
-		size_t firstOccurrence = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, 0);
-		if (firstOccurrence == (size_t)-1)
-		{
-			return TRUE; // No replacements needed.
-		}
-
+		size_t read_idx = 0;
+		size_t last_match_end = 0;
 		_FC_BUFFER newBuffer;
 		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
+		BOOL success = TRUE;
 
-		// 1) Count total occurrences to compute final size
-		size_t occurrences = 0;
-		for (size_t idx = firstOccurrence;
-			idx < pBuffer->Count;
-			idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, idx) + oldPatternSize)
+		// Single pass: find next match, copy chunk before it, then copy replacement.
+		while ((read_idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, read_idx)) != (size_t)-1)
 		{
-			if (idx - oldPatternSize >= pBuffer->Count) break;
-			occurrences++;
-		}
-
-		// 2) Pre-reserve capacity, checking for overflow
-		size_t delta_per = (newPatternSize > oldPatternSize)
-			? (newPatternSize - oldPatternSize)
-			: 0;
-		size_t extra = occurrences * delta_per;
-		// Prevent wrap‐around
-		if (pBuffer->Count > SIZE_MAX - extra)
-			goto cleanup;
-		if (!_FC_BufferEnsureCapacity(&newBuffer, pBuffer->Count + extra))
-			goto cleanup;
-
-		// 3) Perform the replace loop
-		size_t read_idx = 0;
-		BOOL  success = TRUE;
-		while (read_idx < pBuffer->Count)
-		{
-			// Match?
-			if (read_idx + oldPatternSize <= pBuffer->Count &&
-				memcmp((char*)pBuffer->pData + (read_idx * pBuffer->ElementSize),
-					pOldPattern,
-					oldPatternSize * pBuffer->ElementSize) == 0)
+			// Append the chunk of data from the end of the last match to the start of this one.
+			if (read_idx > last_match_end)
 			{
-				if (newPatternSize && pNewPattern)
-				{
-					if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
-					{
-						success = FALSE;
-						goto cleanup;
-					}
-				}
-				read_idx += oldPatternSize;
-			}
-			else
-			{
-				void* pCurrent = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
-				if (!_FC_BufferAppend(&newBuffer, pCurrent))
+				void* pChunkStart = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
+				size_t chunkCount = read_idx - last_match_end;
+				if (!_FC_BufferAppendRange(&newBuffer, pChunkStart, chunkCount))
 				{
 					success = FALSE;
 					goto cleanup;
 				}
-				read_idx++;
 			}
+
+			// Append the new pattern.
+			if (newPatternSize > 0 && pNewPattern != NULL)
+			{
+				if (!_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize))
+				{
+					success = FALSE;
+					goto cleanup;
+				}
+			}
+
+			// Move read index past the old pattern.
+			read_idx += oldPatternSize;
+			last_match_end = read_idx;
 		}
 
-		// Copy any tail
-		if (read_idx < pBuffer->Count)
+		// If no matches were found at all, we can exit early.
+		if (last_match_end == 0)
 		{
-			void* pTail = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
-			size_t tailCount = pBuffer->Count - read_idx;
+			return TRUE; // No replacements were made.
+		}
+
+		// Append the remainder of the buffer after the last match.
+		if (last_match_end < pBuffer->Count)
+		{
+			void* pTail = (char*)pBuffer->pData + (last_match_end * pBuffer->ElementSize);
+			size_t tailCount = pBuffer->Count - last_match_end;
 			if (!_FC_BufferAppendRange(&newBuffer, pTail, tailCount))
 			{
 				success = FALSE;
