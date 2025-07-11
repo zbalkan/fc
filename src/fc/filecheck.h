@@ -889,13 +889,26 @@ extern "C" {
 
 #define bufferSize 4096
 
-		BYTE buffer[bufferSize];
+		BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), 0, bufferSize);
+		if (buffer == NULL)
+		{
+			// If heap allocation fails, we can't proceed.
+			CloseHandle(hFile);
+			return FALSE;
+		}
+
 		DWORD bytesRead = 0;
 		BOOL success = ReadFile(hFile, buffer, bufferSize, &bytesRead, NULL);
+
+		// Call the text-checking function.
+		BOOL isText = _FC_IsProbablyTextBuffer(buffer, bytesRead);
+
+		HeapFree(GetProcessHeap(), 0, buffer);
 		CloseHandle(hFile);
+
 		if (!success || bytesRead == 0) return FALSE;
 
-		return _FC_IsProbablyTextBuffer(buffer, bytesRead);
+		return isText;
 	}
 
 	static FC_RESULT
