@@ -230,10 +230,18 @@ extern "C" {
 			return FALSE;
 		if (pBuffer->Count + additionalCount > pBuffer->Capacity)
 		{
-			size_t newCapacity = pBuffer->Capacity > 0 ? pBuffer->Capacity * 2 : 8;
+			size_t newCapacity = pBuffer->Capacity > 0 ? pBuffer->Capacity : 8;
+			if (pBuffer->Capacity > 0)
+			{
+				if (pBuffer->Capacity > SIZE_MAX / 2) // Check before doubling
+					newCapacity = SIZE_MAX;
+				else
+					newCapacity *= 2;
+			}
+
 			if (newCapacity < pBuffer->Count + additionalCount)
 				newCapacity = pBuffer->Count + additionalCount;
-			if (newCapacity > SIZE_MAX / pBuffer->ElementSize)
+			if (pBuffer->ElementSize > 0 && newCapacity > SIZE_MAX / pBuffer->ElementSize) // Check before multiplication
 				return FALSE;
 			size_t newSizeInBytes = newCapacity * pBuffer->ElementSize;
 			void* pNewData = pBuffer->pData
