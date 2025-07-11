@@ -469,39 +469,46 @@ extern "C" {
 			return _FC_StringDuplicateRange("", 0);
 		}
 
-		// Convert source UTF-8 to a temporary UTF-16 buffer
 		int WideLength = MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, NULL, 0);
 		if (WideLength == 0) return NULL;
 
-		WCHAR* WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, WideLength * sizeof(WCHAR));
-		if (WideBuffer == NULL) return NULL;
+#define STACK_BUFFER_SIZE 512 // Use stack for up to 512 wide chars (1KB)
+		WCHAR TmpStackBuffer[STACK_BUFFER_SIZE];
+		WCHAR* WideBuffer = TmpStackBuffer; // Default to using the stack buffer.
+		BOOL allocatedOnHeap = FALSE;
+
+		// If the required size is larger than our stack buffer, allocate from the heap.
+		if (WideLength > STACK_BUFFER_SIZE)
+		{
+			WideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)WideLength * sizeof(WCHAR));
+			if (WideBuffer == NULL) return NULL;
+			allocatedOnHeap = TRUE;
+		}
 
 		MultiByteToWideChar(CP_UTF8, 0, Source, (int)SourceLength, WideBuffer, WideLength);
 
-		// Perform Unicode-aware lowercase conversion in-place on the UTF-16 buffer
 		CharLowerW(WideBuffer);
 
-		// Get the required buffer size for the final lowercase UTF-8 string
 		int Utf8Length = WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, NULL, 0, NULL, NULL);
-		if (Utf8Length == 0)
+		char* DestBuffer = NULL;
+
+		if (Utf8Length > 0)
 		{
-			HeapFree(GetProcessHeap(), 0, WideBuffer);
-			return NULL;
+			DestBuffer = (char*)HeapAlloc(GetProcessHeap(), 0, (size_t)Utf8Length + 1);
+			if (DestBuffer != NULL)
+			{
+				WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, DestBuffer, Utf8Length, NULL, NULL);
+				DestBuffer[Utf8Length] = '\0';
+				*NewLength = (size_t)Utf8Length;
+			}
 		}
 
-		char* DestBuffer = (char*)HeapAlloc(GetProcessHeap(), 0, (size_t)Utf8Length + 1);
-		if (DestBuffer == NULL)
+		// Free the buffer only if it was allocated on the heap.
+		if (allocatedOnHeap)
 		{
 			HeapFree(GetProcessHeap(), 0, WideBuffer);
-			return NULL;
 		}
 
-		// Convert the lowercase UTF-16 buffer back to UTF-8
-		WideCharToMultiByte(CP_UTF8, 0, WideBuffer, WideLength, DestBuffer, Utf8Length, NULL, NULL);
-		DestBuffer[Utf8Length] = '\0'; // Null-terminate
-
-		HeapFree(GetProcessHeap(), 0, WideBuffer);
-		*NewLength = (size_t)Utf8Length;
 		return DestBuffer;
 	}
 
