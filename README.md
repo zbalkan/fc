@@ -1,65 +1,75 @@
 # FileCheck for Windows
 
-**This is a proof of concept tool and not production-ready.**
+**This is a proof of concept tool and not yet a feature-complete replacement for `fc.exe`.**
 
 ---
 
 A modern, header-only file comparison library for Windows and a feature-compatible `fc.exe` command-line replacement.
 
-This project provides two main components:
+This project provides three main components organized within the `src` directory:
 
-1.  **`filecheck.h`**: A self-contained, header-only C library for performing high-performance binary and text-based file comparisons using the native Windows API.
-2.  **`fc.c`**: A command-line application that uses the library to provide a powerful, feature-compatible alternative to the standard Windows `fc.exe` utility.
+1.  **`filecheck.h`**: A self-contained, header-only C library located in `src/fc/`.
+2.  **`fc.c`**: A command-line application that uses the library, located in `src/fc/`.
+3.  **`test.c`**: A comprehensive test suite located in `src/test/`.
 
-The entire codebase is written in pure C, adheres to the ReactOS/Windows coding style, and has no external dependencies beyond the standard Windows SDK.
+The entire codebase is written in pure C and has no external dependencies beyond the standard Windows SDK and its libraries.
 
 ## Features
 
 *   **Header-Only Library**: Simply include `filecheck.h` in your C/C++ project to get started.
 *   **High-Performance**:
     *   Uses memory-mapped I/O for fast binary comparisons.
-    *   Uses efficient hashing for fast text-based comparisons.
-*   **Windows Native**: Built entirely on the Windows API for maximum performance and compatibility. No C-runtime dependency required for the library itself.
+    *   Uses efficient hashing and buffer management for fast text-based comparisons.
+*   **Windows Native**: Built entirely on the Windows API for maximum performance and compatibility. It uses undocumented native functions for robust path handling.
 *   **Robust Path Handling**: Full support for long file paths (`\\?\` prefix) and Unicode (UTF-16) filenames.
 *   **Flexible API**: The library exposes a clean API that accepts both UTF-8 and native UTF-16 paths.
 *   **Correct Unicode Support**: Provides a dedicated mode for proper, Unicode-aware case-insensitive comparisons for international text.
-*   **`fc.exe` Compatibility**: The command-line app supports all major `fc.exe` options, including:
+*   **`fc.exe` Compatibility**: The command-line app supports all major `fc.exe` options.
     *   `/B` - Binary comparison
     *   `/C` - Case-insensitive text comparison
-    *   `/L` - Line-by-line text comparison (default)
+    *   `/L` - ASCII text comparison
     *   `/W` - Ignore whitespace differences
-    *   `/N` - Display line numbers
+    *   `/N` - Display line numbers (flag is parsed but not yet used in output)
     *   `/U` - Unicode-aware text comparison
+    *   `/T` - Do not expand tabs to spaces
+*   **Current Limitation**: The library and tool can accurately report **if** files are different but do not yet generate a structured diff output showing the actual differing lines, unlike the standard `fc.exe`.
 
 ## Getting Started
 
 ### Prerequisites
 
-*   A C/C++ compiler for Windows (e.g., MSVC from Visual Studio, Clang, or MinGW-w64).
-*   The Windows SDK.
+*   Microsoft Visual Studio with the "Desktop development with C++" workload installed.
+*   The Windows SDK (usually included with Visual Studio).
 
-### Building the `fc.exe` Replacement
+### Building the Projects
 
-You can compile `fc.c` from any standard developer command prompt.
+The repository includes a Visual Studio solution at `src/fc.sln` which contains projects for both the `fc` command-line tool and the `test` suite.
 
-**Using MSVC (from a Developer Command Prompt for VS):**
+1.  Open `src/fc.sln` in Visual Studio.
+2.  Select a configuration (e.g., `Release` or `Debug`) and platform (e.g., `x64`).
+3.  Build the solution by selecting **Build > Build Solution** from the menu (or by pressing `Ctrl+Shift+B`).
 
-```sh
-cl fc.c /O2 /W4 /Fe:fc.exe
-```
-*   `/O2`: Optimize for speed.
-*   `/W4`: Enable high-level warnings.
-*   `/Fe:fc.exe`: Name the output executable `fc.exe`.
+This will produce two executables:
+*   `fc.exe` in the build output directory for the `fc` project.
+*   `test.exe` in the build output directory for the `test` project.
 
-**Using Clang:**
+**Note:** The projects are configured to link against `ntdll.lib` to use certain native Windows API functions for path canonicalization.
 
-```sh
-clang fc.c -O2 -Wall -o fc.exe -luser32
-```
+### Running the Tests
+
+After building the solution, you can run the test suite to validate the library's functionality.
+
+1.  Open a terminal or command prompt.
+2.  Navigate to the build output directory (e.g., `src/x64/Release/`).
+3.  Run the test executable:
+    ```sh
+    test.exe
+    ```
+The test executable will create temporary files, report the status of each test case, and finish with a summary of passed and failed tests.
 
 ### Using the Command-Line Tool
 
-The syntax is identical to the Windows `fc.exe` command.
+The syntax is designed to be compatible with the Windows `fc.exe` command.
 
 **Basic Usage:**
 ```sh
@@ -80,27 +90,29 @@ fc.exe /C /U german_doc1.txt german_doc2.txt
 
 ## Using the `filecheck.h` Library
 
-To use the library in your own project, simply copy `filecheck.h` into your source tree and include it.
+To use the library in your own project, simply copy `src/fc/filecheck.h` into your source tree and include it.
+
+**Important:** Because the library uses native API functions, any project that includes `filecheck.h` must be linked with `ntdll.lib`. In Visual Studio, you can add this in **Project Properties > Linker > Input > Additional Dependencies**.
 
 ### Library API
 
 The library provides two primary functions for maximum flexibility.
 
-#### `FileCheckCompareFilesW` (Recommended)
+#### `FC_CompareFilesW` (Recommended)
 This is the most efficient function, as it uses native Windows UTF-16 strings directly.
 
 ```c
-FC_RESULT FileCheckCompareFilesW(
+FC_RESULT FC_CompareFilesW(
     _In_z_ const WCHAR* Path1,
     _In_z_ const WCHAR* Path2,
     _In_ const FC_CONFIG* Config);
 ```
 
-#### `FileCheckCompareFilesUtf8`
+#### `FC_CompareFilesUtf8`
 A convenience wrapper for applications that work with UTF-8 strings.
 
 ```c
-FC_RESULT FileCheckCompareFilesUtf8(
+FC_RESULT FC_CompareFilesUtf8(
     _In_z_ const char* Path1Utf8,
     _In_z_ const char* Path2Utf8,
     _In_ const FC_CONFIG* Config);
@@ -118,7 +130,7 @@ Here is a simple example of how to use the library in your own C code.
 void MyOutputCallback(void* UserData, const char* Message, int Line1, int Line2)
 {
     (void)UserData; // Unused
-    if (Line1 > 0) {
+    if (Line1 >= 0) {
         printf("Difference on line %d: %s\n", Line1, Message);
     } else {
         printf("Info: %s\n", Message);
@@ -129,8 +141,8 @@ int main(void)
 {
     // 1. Configure the comparison
     FC_CONFIG config = {0};
-    config.Mode = FC_MODE_TEXT;
-    config.Flags = FC_IGNORE_CASE | FC_IGNORE_WS; // Ignore case and whitespace
+    config.Mode = FC_MODE_AUTO; // Let the library detect if files are text or binary
+    config.Flags = FC_IGNORE_CASE | FC_IGNORE_WS; // Ignore case and whitespace for text files
     config.Output = MyOutputCallback;
 
     // 2. Define file paths (using wide strings for the native API)
@@ -138,7 +150,7 @@ int main(void)
     const WCHAR* file2 = L"C:\\docs\\report_v2.txt";
 
     // 3. Perform the comparison
-    FC_RESULT result = FileCheckCompareFilesW(file1, file2, &config);
+    FC_RESULT result = FC_CompareFilesW(file1, file2, &config);
 
     // 4. Check the result
     switch (result)
@@ -160,7 +172,7 @@ int main(void)
 
 ## License
 
-This project is licensed under the **GPLv2**. Please see the `LICENSE` file for details.
+This project is licensed under the **GPL-2.0-only**. Please see the `LICENSE` file for details.
 
 ## References
 
