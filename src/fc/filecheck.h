@@ -1023,27 +1023,25 @@ extern "C" {
 
 		// Assume OK, change if difference is found
 		Result = FC_OK;
-		if (RtlCompareMemory(Buffer1, Buffer2, CompareSize) != CompareSize)
-		{
-			Result = FC_DIFFERENT;
-			if (Config->Output != NULL)
-			{
-				// Find the first difference to report it
-				size_t FirstDifference = (size_t)-1;
-				for (size_t i = 0; i < CompareSize; ++i)
-				{
-					if (Buffer1[i] != Buffer2[i])
-					{
-						FirstDifference = i;
-						break;
-					}
-				}
+		size_t FirstDifference = (size_t)-1;
 
-				char Message[64];
-				if (_snprintf_s(Message, sizeof(Message), _TRUNCATE, "Binary diff at offset 0x%zx", FirstDifference) > 0)
-				{
-					Config->Output(Config->UserData, Message, -1, -1);
-				}
+		// Consolidated loop to find the first difference and compare.
+		for (size_t i = 0; i < CompareSize; ++i)
+		{
+			if (Buffer1[i] != Buffer2[i])
+			{
+				FirstDifference = i;
+				Result = FC_DIFFERENT;
+				break;
+			}
+		}
+
+		if (Result == FC_DIFFERENT && Config->Output != NULL)
+		{
+			char Message[64];
+			if (_snprintf_s(Message, sizeof(Message), _TRUNCATE, "Binary diff at offset 0x%zx", FirstDifference) > 0)
+			{
+				Config->Output(Config->UserData, Message, -1, -1);
 			}
 		}
 
