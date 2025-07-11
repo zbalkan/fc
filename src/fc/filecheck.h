@@ -1045,22 +1045,26 @@ extern "C" {
 			_In_z_ const WCHAR* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
-		HANDLE File1Handle = CreateFileW(Path1, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-		HANDLE File2Handle = CreateFileW(Path2, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		HANDLE File1Handle = INVALID_HANDLE_VALUE;
+		HANDLE File2Handle = INVALID_HANDLE_VALUE;
+		HANDLE Map1Handle = NULL;
+		HANDLE Map2Handle = NULL;
+		unsigned char* Buffer1 = NULL;
+		unsigned char* Buffer2 = NULL;
+		FC_RESULT Result = FC_ERROR_IO; // Default to error
+
+		File1Handle = CreateFileW(Path1, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		File2Handle = CreateFileW(Path2, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 
 		if (File1Handle == INVALID_HANDLE_VALUE || File2Handle == INVALID_HANDLE_VALUE)
 		{
-			if (File1Handle != INVALID_HANDLE_VALUE) CloseHandle(File1Handle);
-			if (File2Handle != INVALID_HANDLE_VALUE) CloseHandle(File2Handle);
-			return FC_ERROR_IO;
+			goto cleanup;
 		}
 
 		LARGE_INTEGER File1Size, File2Size;
 		if (!GetFileSizeEx(File1Handle, &File1Size) || !GetFileSizeEx(File2Handle, &File2Size))
 		{
-			CloseHandle(File1Handle);
-			CloseHandle(File2Handle);
-			return FC_ERROR_IO;
+			goto cleanup;
 		}
 
 		if (File1Size.QuadPart != File2Size.QuadPart)
@@ -1069,77 +1073,66 @@ extern "C" {
 			{
 				Config->Output(Config->UserData, "Files are different sizes", -1, -1);
 			}
-			CloseHandle(File1Handle);
-			CloseHandle(File2Handle);
-			return FC_DIFFERENT;
+			Result = FC_DIFFERENT;
+			goto cleanup;
+		}
+
+		if (File1Size.QuadPart == 0)
+		{
+			Result = FC_OK; // Empty files are identical
+			goto cleanup;
 		}
 
 		size_t CompareSize = (size_t)File1Size.QuadPart;
-		HANDLE Map1Handle = CreateFileMapping(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
-		HANDLE Map2Handle = CreateFileMapping(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+		Map1Handle = CreateFileMappingW(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+		Map2Handle = CreateFileMappingW(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
 
 		if (Map1Handle == NULL || Map2Handle == NULL)
 		{
-			if (Map1Handle != NULL) CloseHandle(Map1Handle);
-			if (Map2Handle != NULL) CloseHandle(Map2Handle);
-			CloseHandle(File1Handle);
-			CloseHandle(File2Handle);
-			return FC_ERROR_IO;
+			goto cleanup;
 		}
 
-		unsigned char* Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
-		unsigned char* Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
+		Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
+		Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
 
 		if (Buffer1 == NULL || Buffer2 == NULL)
 		{
-			if (Buffer1 != NULL) UnmapViewOfFile(Buffer1);
-			if (Buffer2 != NULL) UnmapViewOfFile(Buffer2);
-			CloseHandle(Map1Handle);
-			CloseHandle(Map2Handle);
-			CloseHandle(File1Handle);
-			CloseHandle(File2Handle);
-			return FC_ERROR_IO;
+			goto cleanup;
 		}
 
-		FC_RESULT Result = FC_OK;
-		size_t FirstDifference = (size_t)-1;
-
-		// Consolidated loop to find the first difference.
-		for (size_t i = 0; i < CompareSize; ++i)
+		// Assume OK, change if difference is found
+		Result = FC_OK;
+		if (RtlCompareMemory(Buffer1, Buffer2, CompareSize) != CompareSize)
 		{
-			if (Buffer1[i] != Buffer2[i])
+			Result = FC_DIFFERENT;
+			if (Config->Output != NULL)
 			{
-				FirstDifference = i;
-				Result = FC_DIFFERENT;
-				break;
+				// Find the first difference to report it
+				size_t FirstDifference = (size_t)-1;
+				for (size_t i = 0; i < CompareSize; ++i)
+				{
+					if (Buffer1[i] != Buffer2[i])
+					{
+						FirstDifference = i;
+						break;
+					}
+				}
+
+				char Message[64];
+				if (_snprintf_s(Message, sizeof(Message), _TRUNCATE, "Binary diff at offset 0x%zx", FirstDifference) > 0)
+				{
+					Config->Output(Config->UserData, Message, -1, -1);
+				}
 			}
 		}
 
-		if (Result == FC_DIFFERENT && Config->Output != NULL)
-		{
-			char Message[64] = "Binary diff at offset 0x";
-			int charsWritten;
-
-			charsWritten = _snprintf_s(
-				Message,
-				sizeof(Message),
-				_TRUNCATE,
-				"Binary diff at offset 0x%zx",
-				FirstDifference
-			);
-
-			if (charsWritten > 0)
-			{
-				Config->Output(Config->UserData, Message, -1, -1);
-			}
-		}
-
-		UnmapViewOfFile(Buffer1);
-		UnmapViewOfFile(Buffer2);
-		CloseHandle(Map1Handle);
-		CloseHandle(Map2Handle);
-		CloseHandle(File1Handle);
-		CloseHandle(File2Handle);
+	cleanup:
+		if (Buffer1) UnmapViewOfFile(Buffer1);
+		if (Buffer2) UnmapViewOfFile(Buffer2);
+		if (Map1Handle) CloseHandle(Map1Handle);
+		if (Map2Handle) CloseHandle(Map2Handle);
+		if (File1Handle != INVALID_HANDLE_VALUE) CloseHandle(File1Handle);
+		if (File2Handle != INVALID_HANDLE_VALUE) CloseHandle(File2Handle);
 		return Result;
 	}
 
