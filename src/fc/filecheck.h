@@ -973,9 +973,9 @@ extern "C" {
 		);
 		if (hFile == INVALID_HANDLE_VALUE) return FALSE;
 
-#define bufferSize 4096
+#define BUFFER_SIZE 4096
 
-		BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), 0, bufferSize);
+		BYTE* buffer = (BYTE*)HeapAlloc(GetProcessHeap(), 0, BUFFER_SIZE);
 		if (buffer == NULL)
 		{
 			// If heap allocation fails, we can't proceed.
@@ -984,13 +984,15 @@ extern "C" {
 		}
 
 		DWORD bytesRead = 0;
-		BOOL success = ReadFile(hFile, buffer, bufferSize, &bytesRead, NULL);
+		BOOL success = ReadFile(hFile, buffer, BUFFER_SIZE, &bytesRead, NULL);
 
 		// Call the text-checking function.
 		BOOL isText = _FC_IsProbablyTextBuffer(buffer, bytesRead);
 
 		HeapFree(GetProcessHeap(), 0, buffer);
 		CloseHandle(hFile);
+
+#undef BUFFER_SIZE
 
 		if (!success || bytesRead == 0) return FALSE;
 
