@@ -111,7 +111,9 @@ static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 	MakePath(baseDir, L"ascii_id2.txt", p2);
 	WRITE_STR_FILE(p1, "Line1\nLine2\n"); WRITE_STR_FILE(p2, "Line1\nLine2\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -138,7 +140,9 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Line1\nLine2\n");
 	WRITE_STR_FILE(p2, "LineX\nLineY\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -164,8 +168,9 @@ static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	cfg.Flags = 0;
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);	cfg.Flags = 0;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -191,7 +196,9 @@ static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	cfg.Flags = FC_IGNORE_CASE;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
@@ -218,7 +225,9 @@ static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	cfg.Flags = 0;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
@@ -245,8 +254,10 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
-	cfg.Flags = 0;
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
+	cfg.Flags = FC_IGNORE_WS;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -272,7 +283,9 @@ static void Test_Tabs_Expanded(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	cfg.Flags = 0;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
@@ -299,7 +312,9 @@ static void Test_Tabs_Raw(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	cfg.Flags = FC_RAW_TABS;
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
@@ -330,7 +345,9 @@ static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p1);
 	if (!WriteDataFile(p2, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -359,7 +376,9 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, a, (DWORD)strlen(a))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, b, (DWORD)strlen(b))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -386,7 +405,9 @@ static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, content, (DWORD)strlen(content))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, content, (DWORD)strlen(content))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -420,7 +441,9 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	// without BOM
 	WRITE_STR_FILE(p2, text);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -447,7 +470,9 @@ static void Test_BinaryExactMatch(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, data, sizeof(data))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, data, sizeof(data))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -475,7 +500,9 @@ static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -503,7 +530,9 @@ static void Test_BinarySizeDiff(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -532,7 +561,9 @@ static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, text);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -561,7 +592,9 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
@@ -592,7 +625,9 @@ static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 	if (h == INVALID_HANDLE_VALUE) Throw(L"create empty failed", p2);
 	CloseHandle(h);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
-	ConvertWideToUtf8OrExit(p1, u1, sizeof(u1)); ConvertWideToUtf8OrExit(p2, u2, sizeof(u2));
+	const int utf8_buffer_size = MAX_LONG_PATH * 4;
+	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
+	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
 
 	HeapFree(GetProcessHeap(), 0, p1);
