@@ -1248,12 +1248,7 @@ extern "C" {
 
 		wcsncpy_s(outPath, len, NtPath.Buffer, _TRUNCATE);
 		RtlFreeUnicodeString(&NtPath);
-		if(outPath == NULL)
-		{
-			// Memory allocation failed
-			return FALSE;
-		}
-		if(outPath != NULL && outPath[0] == L'\0')
+		if (outPath[0] == L'\0')
 		{
 			// If the path is empty after conversion, treat it as invalid.
 			HeapFree(GetProcessHeap(), 0, outPath);
