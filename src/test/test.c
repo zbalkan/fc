@@ -258,7 +258,7 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(p1, u1, utf8_buffer_size);
 	ConvertWideToUtf8OrExit(p2, u2, utf8_buffer_size);
 	cfg.Flags = FC_IGNORE_WS;
-	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
 
 	HeapFree(GetProcessHeap(), 0, p1);
 	HeapFree(GetProcessHeap(), 0, p2);
