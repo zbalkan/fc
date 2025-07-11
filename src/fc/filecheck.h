@@ -672,7 +672,13 @@ extern "C" {
 		}
 
 		// 2. Perform the replacement in-place on the buffer.
-		_FC_BufferReplace(&buffer, &tab, 1, spaces, TabWidth);
+		if (!_FC_BufferReplace(&buffer, &tab, 1, spaces, TabWidth))
+		{
+			// Free on failure
+			_FC_BufferFree(&buffer);
+			*NewLength = 0;
+			return NULL;
+		}
 
 		// 3. Return the result.
 		*NewLength = buffer.Count;
