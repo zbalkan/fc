@@ -70,7 +70,7 @@ static BOOL WriteDataFile(_In_z_ const WCHAR* path, _In_reads_(size) const void*
 }
 
 // Combine directory and filename into extended-length path
-static void MakePath(
+static void ConcatPath(
 	_In_z_ const WCHAR* baseDir,
 	_In_z_ const WCHAR* name,
 	_Out_writes_z_(MAX_LONG_PATH) WCHAR* out)
@@ -133,8 +133,8 @@ static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"ascii_id1.txt", p1);
-	MakePath(baseDir, L"ascii_id2.txt", p2);
+	ConcatPath(baseDir, L"ascii_id1.txt", p1);
+	ConcatPath(baseDir, L"ascii_id2.txt", p2);
 	WRITE_STR_FILE(p1, "Line1\nLine2\n"); WRITE_STR_FILE(p2, "Line1\nLine2\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
 
@@ -155,8 +155,8 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"ascii_diff1.txt", p1);
-	MakePath(baseDir, L"ascii_diff2.txt", p2);
+	ConcatPath(baseDir, L"ascii_diff1.txt", p1);
+	ConcatPath(baseDir, L"ascii_diff2.txt", p2);
 	WRITE_STR_FILE(p1, "Line1\nLine2\n");
 	WRITE_STR_FILE(p2, "LineX\nLineY\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -177,8 +177,8 @@ static void Test_CaseSensitivity_Sensitive(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"case1.txt", p1);
-	MakePath(baseDir, L"case2.txt", p2);
+	ConcatPath(baseDir, L"case1.txt", p1);
+	ConcatPath(baseDir, L"case2.txt", p2);
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -199,8 +199,8 @@ static void Test_CaseSensitivity_Insensitive(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"case1.txt", p1);
-	MakePath(baseDir, L"case2.txt", p2);
+	ConcatPath(baseDir, L"case1.txt", p1);
+	ConcatPath(baseDir, L"case2.txt", p2);
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -222,8 +222,8 @@ static void Test_Whitespace_Sensitive(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"ws1.txt", p1);
-	MakePath(baseDir, L"ws2.txt", p2);
+	ConcatPath(baseDir, L"ws1.txt", p1);
+	ConcatPath(baseDir, L"ws2.txt", p2);
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -245,8 +245,8 @@ static void Test_Whitespace_Insensitive(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"ws1.txt", p1);
-	MakePath(baseDir, L"ws2.txt", p2);
+	ConcatPath(baseDir, L"ws1.txt", p1);
+	ConcatPath(baseDir, L"ws2.txt", p2);
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -268,8 +268,8 @@ static void Test_Tabs_Expanded(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"tab1.txt", p1);
-	MakePath(baseDir, L"tab2.txt", p2);
+	ConcatPath(baseDir, L"tab1.txt", p1);
+	ConcatPath(baseDir, L"tab2.txt", p2);
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -291,8 +291,8 @@ static void Test_Tabs_Raw(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"tab1.txt", p1);
-	MakePath(baseDir, L"tab2.txt", p2);
+	ConcatPath(baseDir, L"tab1.txt", p1);
+	ConcatPath(baseDir, L"tab2.txt", p2);
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
@@ -317,8 +317,8 @@ static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"unicode_u8_1.txt", p1);
-	MakePath(baseDir, L"unicode_u8_2.txt", p2);
+	ConcatPath(baseDir, L"unicode_u8_1.txt", p1);
+	ConcatPath(baseDir, L"unicode_u8_2.txt", p2);
 	// write raw UTF-8
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p1);
 	if (!WriteDataFile(p2, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p2);
@@ -343,8 +343,8 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"unicode_diac1.txt", p1);
-	MakePath(baseDir, L"unicode_diac2.txt", p2);
+	ConcatPath(baseDir, L"unicode_diac1.txt", p1);
+	ConcatPath(baseDir, L"unicode_diac2.txt", p2);
 	if (!WriteDataFile(p1, a, (DWORD)strlen(a))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, b, (DWORD)strlen(b))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
@@ -366,8 +366,8 @@ static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"unicode_emoji1.txt", p1);
-	MakePath(baseDir, L"unicode_emoji2.txt", p2);
+	ConcatPath(baseDir, L"unicode_emoji1.txt", p1);
+	ConcatPath(baseDir, L"unicode_emoji2.txt", p2);
 	if (!WriteDataFile(p1, content, (DWORD)strlen(content))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, content, (DWORD)strlen(content))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
@@ -391,8 +391,8 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"bom1.txt", p1);
-	MakePath(baseDir, L"bom2.txt", p2);
+	ConcatPath(baseDir, L"bom1.txt", p1);
+	ConcatPath(baseDir, L"bom2.txt", p2);
 
 	// with BOM
 	if (!WriteDataFile(p1, bom, sizeof(bom))) Throw(L"write BOM failed", p1);
@@ -419,8 +419,8 @@ static void Test_BinaryExactMatch(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"bin1.dat", p1);
-	MakePath(baseDir, L"bin2.dat", p2);
+	ConcatPath(baseDir, L"bin1.dat", p1);
+	ConcatPath(baseDir, L"bin2.dat", p2);
 	if (!WriteDataFile(p1, data, sizeof(data))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, data, sizeof(data))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
@@ -443,8 +443,8 @@ static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"bin_mid1.dat", p1);
-	MakePath(baseDir, L"bin_mid2.dat", p2);
+	ConcatPath(baseDir, L"bin_mid1.dat", p1);
+	ConcatPath(baseDir, L"bin_mid2.dat", p2);
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
@@ -467,8 +467,8 @@ static void Test_BinarySizeDiff(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"bin_sz1.dat", p1);
-	MakePath(baseDir, L"bin_sz2.dat", p2);
+	ConcatPath(baseDir, L"bin_sz1.dat", p1);
+	ConcatPath(baseDir, L"bin_sz2.dat", p2);
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
@@ -492,8 +492,8 @@ static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"auto_text.txt", p1);
-	MakePath(baseDir, L"auto_bin.dat", p2);
+	ConcatPath(baseDir, L"auto_text.txt", p1);
+	ConcatPath(baseDir, L"auto_bin.dat", p2);
 	WRITE_STR_FILE(p1, text);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
@@ -517,8 +517,8 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"auto_unicode.txt", p1);
-	MakePath(baseDir, L"auto_bin2.dat", p2);
+	ConcatPath(baseDir, L"auto_unicode.txt", p1);
+	ConcatPath(baseDir, L"auto_bin2.dat", p2);
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
 	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
@@ -542,8 +542,8 @@ static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 	char* u1 = AllocCharPath();
 	char* u2 = AllocCharPath();
 
-	MakePath(baseDir, L"auto_bin3.dat", p1);
-	MakePath(baseDir, L"auto_empty.bin", p2);
+	ConcatPath(baseDir, L"auto_bin3.dat", p1);
+	ConcatPath(baseDir, L"auto_empty.bin", p2);
 	if (!WriteDataFile(p1, bin, sizeof(bin))) Throw(L"write failed", p1);
 	// create empty file
 	HANDLE h = CreateFileW(p2, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
@@ -566,7 +566,7 @@ static void Test_UTF8WrapperValidPath(const WCHAR* baseDir)
 	WCHAR pWide[MAX_LONG_PATH];
     char pUtf8[MAX_LONG_PATH*4 + 1] = {0};
 	// Filename with non-ASCII character
-	MakePath(baseDir, L"ünicode.txt", pWide);
+	ConcatPath(baseDir, L"ünicode.txt", pWide);
 	WRITE_STR_FILE(pWide, "X\n");
 	ConvertWideToUtf8OrExit(pWide, pUtf8, sizeof(pUtf8));
     FC_CONFIG cfg = {0};
