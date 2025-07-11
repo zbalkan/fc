@@ -299,6 +299,116 @@ extern "C" {
 		return (char*)pBuffer->pData + (index * pBuffer->ElementSize);
 	}
 
+	/**
+	 * @brief Finds the first occurrence of a pattern within a buffer.
+	 *
+	 * @param pBuffer The buffer to search in.
+	 * @param pPattern A pointer to the pattern to find.
+	 * @param patternSize The number of elements in the pattern.
+	 * @param startIndex The index to start searching from.
+	 * @return The starting index of the found pattern, or (size_t)-1 if not found.
+	 */
+	static inline size_t
+		_FC_BufferFind(
+			_In_ const _FC_BUFFER* pBuffer,
+			_In_ const void* pPattern,
+			_In_ size_t patternSize,
+			_In_ size_t startIndex)
+	{
+		if (patternSize == 0 || pBuffer->Count < patternSize || startIndex > pBuffer->Count - patternSize)
+		{
+			return (size_t)-1;
+		}
+
+		size_t searchLimit = pBuffer->Count - patternSize;
+		for (size_t i = startIndex; i <= searchLimit; ++i)
+		{
+			void* pCurrent = (char*)pBuffer->pData + (i * pBuffer->ElementSize);
+			if (memcmp(pCurrent, pPattern, patternSize * pBuffer->ElementSize) == 0)
+			{
+				return i;
+			}
+		}
+		return (size_t)-1;
+	}
+
+
+	/**
+	 * @brief Replaces all occurrences of a pattern with a new pattern, in-place. (Optimized Single-Pass)
+	 *
+	 * This function is highly efficient for pattern-based replacement and removal.
+	 * It iterates through the source buffer only once.
+	 *
+	 * @return TRUE on success, FALSE on memory allocation failure.
+	 */
+	static inline BOOL
+		_FC_BufferReplace(
+			_Inout_ _FC_BUFFER* pBuffer,
+			_In_ const void* pOldPattern,
+			_In_ size_t oldPatternSize,
+			_In_opt_ const void* pNewPattern,
+			_In_ size_t newPatternSize)
+	{
+		if (oldPatternSize == 0 || pBuffer->Count == 0)
+		{
+			return TRUE; // Nothing to replace.
+		}
+
+		// --- Pass 1 (and only pass): Find and Replace ---
+
+		// First, check if any occurrences exist at all. If not, we can exit immediately.
+		size_t firstOccurrence = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, 0);
+		if (firstOccurrence == (size_t)-1)
+		{
+			return TRUE; // No replacements needed.
+		}
+
+		// A temporary buffer to build the new content.
+		_FC_BUFFER newBuffer;
+		_FC_BufferInit(&newBuffer, pBuffer->ElementSize);
+		// We can't know the final size yet, so we let it grow dynamically.
+
+		size_t read_idx = 0;
+		size_t match_idx = firstOccurrence;
+
+		do
+		{
+			// Copy the segment from the last read position up to the current match.
+			size_t segmentLength = match_idx - read_idx;
+			if (segmentLength > 0)
+			{
+				void* pSegmentStart = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
+				_FC_BufferAppendRange(&newBuffer, pSegmentStart, segmentLength);
+			}
+
+			// Append the new pattern.
+			if (newPatternSize > 0)
+			{
+				_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize);
+			}
+
+			// Advance the read index past the old pattern.
+			read_idx = match_idx + oldPatternSize;
+
+			// Find the next match starting from the new read position.
+			match_idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, read_idx);
+
+		} while (match_idx != (size_t)-1);
+
+		// After the last match, copy the rest of the original buffer.
+		if (read_idx < pBuffer->Count)
+		{
+			void* pTailStart = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
+			_FC_BufferAppendRange(&newBuffer, pTailStart, pBuffer->Count - read_idx);
+		}
+
+		// --- Final Step: Swap the old buffer with the new one ---
+		_FC_BufferFree(pBuffer);
+		*pBuffer = newBuffer;
+
+		return TRUE;
+	}
+
 	// Convenience function to null-terminate and return a character buffer as a string.
 	static inline char*
 		_FC_BufferToString(
@@ -476,38 +586,30 @@ extern "C" {
 		_FC_BufferFree(pLineBuffer);
 	}
 
-	// Wrapper matching original signature, using linked-list expansion
 	static inline char*
 		_FC_ExpandTabs(
 			_In_reads_(SourceLength) const char* Source,
 			_In_ size_t SourceLength,
 			_Out_ size_t* NewLength)
 	{
-		const size_t TabWidth = 4;
+		const char tab = '\t';
 		const char* spaces = "    ";
+		const size_t TabWidth = 4;
 		_FC_BUFFER buffer;
 
-		// Initialize a buffer to hold characters.
+		// 1. Initialize a buffer and copy the source string into it.
 		_FC_BufferInit(&buffer, sizeof(char));
-		// Pre-allocating improves performance, though not strictly necessary.
-		// A safe upper bound is SourceLength * TabWidth.
-		_FC_BufferEnsureCapacity(&buffer, SourceLength * TabWidth);
-
-		for (size_t i = 0; i < SourceLength; ++i)
+		if (!_FC_BufferAppendRange(&buffer, Source, SourceLength))
 		{
-			if (Source[i] == '\t')
-			{
-				_FC_BufferAppendRange(&buffer, spaces, TabWidth);
-			}
-			else
-			{
-				_FC_BufferAppend(&buffer, &Source[i]);
-			}
+			*NewLength = 0;
+			return NULL;
 		}
 
+		// 2. Perform the replacement in-place on the buffer.
+		_FC_BufferReplace(&buffer, &tab, 1, spaces, TabWidth);
+
+		// 3. Return the result.
 		*NewLength = buffer.Count;
-		// The helper function null-terminates and returns the data pointer.
-		// The caller now owns the memory in buffer.pData.
 		return _FC_BufferToString(&buffer);
 	}
 

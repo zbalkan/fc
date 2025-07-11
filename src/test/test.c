@@ -378,8 +378,9 @@ int wmain(void)
 	Test_CaseSensitivity_Sensitive(testDir);
 	Test_CaseSensitivity_Insensitive(testDir);
 	Test_Whitespace_Sensitive(testDir);
-	Test_Whitespace_Sensitive(testDir);
+	Test_Whitespace_Insensitive(testDir);
 	Test_Tabs_Expanded(testDir);
+	Test_Tabs_Raw(testDir);
 	Test_UnicodeUtf8Match(testDir);
 	Test_UnicodeDiacritics(testDir);
 	Test_UnicodeEmojiMultiline(testDir);
