@@ -369,31 +369,27 @@ extern "C" {
 		// We can't know the final size yet, so we let it grow dynamically.
 
 		size_t read_idx = 0;
-		size_t match_idx = firstOccurrence;
-
-		do
+		while (read_idx < pBuffer->Count)
 		{
-			// Copy the segment from the last read position up to the current match.
-			size_t segmentLength = match_idx - read_idx;
-			if (segmentLength > 0)
+			// Check for a match at the current position.
+			if (read_idx + oldPatternSize <= pBuffer->Count &&
+				memcmp((char*)pBuffer->pData + (read_idx * pBuffer->ElementSize), pOldPattern, oldPatternSize * pBuffer->ElementSize) == 0)
 			{
-				void* pSegmentStart = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
-				_FC_BufferAppendRange(&newBuffer, pSegmentStart, segmentLength);
+				// Only append if the new pattern has a size AND a valid pointer.
+				if (newPatternSize > 0 && pNewPattern != NULL)
+				{
+					_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize);
+				}
+				read_idx += oldPatternSize; // Skip over the old pattern in the source.
 			}
-
-			// Append the new pattern.
-			if (newPatternSize > 0)
+			else
 			{
-				_FC_BufferAppendRange(&newBuffer, pNewPattern, newPatternSize);
+				// No match. Copy the single element from the source.
+				void* pCurrent = (char*)pBuffer->pData + (read_idx * pBuffer->ElementSize);
+				_FC_BufferAppend(&newBuffer, pCurrent);
+				read_idx++;
 			}
-
-			// Advance the read index past the old pattern.
-			read_idx = match_idx + oldPatternSize;
-
-			// Find the next match starting from the new read position.
-			match_idx = _FC_BufferFind(pBuffer, pOldPattern, oldPatternSize, read_idx);
-
-		} while (match_idx != (size_t)-1);
+		}
 
 		// After the last match, copy the rest of the original buffer.
 		if (read_idx < pBuffer->Count)
@@ -692,56 +688,78 @@ extern "C" {
 		_FC_ParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
 			_In_ size_t BufferLength,
-			_Inout_ _FC_BUFFER* pLineBuffer, // Changed from _FC_LINE_ARRAY*
+			_Inout_ _FC_BUFFER* pLineBuffer, // The buffer for _FC_LINE structs
 			_In_ const FC_CONFIG* Config)
 	{
-		// The function no longer initializes the buffer, the caller does.
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
 
 		while (Ptr < End)
 		{
+			// 1. Find the end of the current line.
 			const char* Newline = Ptr;
 			while (Newline < End && *Newline != '\n' && *Newline != '\r')
 			{
 				Newline++;
 			}
+			size_t LineLength = (size_t)(Newline - Ptr);
 
-			size_t OriginalLength = (size_t)(Newline - Ptr);
-			char* LineText = _FC_StringDuplicateRange(Ptr, OriginalLength);
-			if (LineText == NULL)
+			// 2. Create a mutable buffer for the line's text.
+			//    This buffer will be modified for tabs and whitespace.
+			_FC_BUFFER textBuffer;
+			_FC_BufferInit(&textBuffer, sizeof(char));
+			if (!_FC_BufferAppendRange(&textBuffer, Ptr, LineLength))
 			{
-				// No buffer to free here yet, just return.
+				// The caller is responsible for freeing the partially filled pLineBuffer.
 				return FC_ERROR_MEMORY;
 			}
 
-			size_t FinalLength = OriginalLength;
-			char* FinalText = LineText;
+			// 3. Perform text normalization based on config flags.
 
+			// Handle tab expansion if FC_RAW_TABS is NOT set.
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
-				char* Expanded = _FC_ExpandTabs(LineText, OriginalLength, &FinalLength);
-				if (Expanded == NULL)
-				{
-					HeapFree(GetProcessHeap(), 0, LineText);
-					return FC_ERROR_MEMORY;
-				}
-				HeapFree(GetProcessHeap(), 0, LineText);
-				FinalText = Expanded;
+				const char tab = '\t';
+				const char* spaces = "    ";
+				_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4);
 			}
 
+			// Handle whitespace removal if FC_IGNORE_WS IS set.
+			if (Config->Flags & FC_IGNORE_WS)
+			{
+				const char space = ' ';
+				const char tab = '\t'; // Must remove tabs again if they were just added.
+
+				// Remove all spaces by replacing them with nothing.
+				_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0);
+				// Remove all tabs by replacing them with nothing.
+				_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0);
+			}
+
+			// 4. Finalize the processed text from the buffer.
+			size_t FinalLength = textBuffer.Count;
+			char* FinalText = _FC_BufferToString(&textBuffer); // Finalizes and returns the data pointer.
+
+			if (FinalText == NULL)
+			{
+				_FC_BufferFree(&textBuffer); // Clean up the text buffer on failure.
+				return FC_ERROR_MEMORY;
+			}
+
+			// 5. Hash the final, normalized line and append it to the line buffer.
 			_FC_LINE line;
 			line.Text = FinalText;
 			line.Length = FinalLength;
+			// Note: _FC_HashLine no longer needs to check for FC_IGNORE_WS.
 			line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
 
 			if (!_FC_BufferAppend(pLineBuffer, &line))
 			{
-				HeapFree(GetProcessHeap(), 0, FinalText);
-				// The caller is responsible for freeing the partially filled buffer.
+				HeapFree(GetProcessHeap(), 0, FinalText); // Free the text we just finalized.
 				return FC_ERROR_MEMORY;
 			}
 
+			// 6. Advance the main pointer to the start of the next line.
 			while (Newline < End && (*Newline == '\n' || *Newline == '\r'))
 			{
 				Newline++;
