@@ -480,7 +480,6 @@ extern "C" {
 		*NewLength = 0;
 		char* DestBuffer = NULL;
 		WCHAR* WideBuffer = NULL;
-		BOOL   allocatedOnHeap = FALSE;
 
 		if (SourceLength == 0)
 		{
@@ -514,7 +513,6 @@ extern "C" {
 				(size_t)WideLength * sizeof(WCHAR));
 			if (WideBuffer == NULL)
 				goto cleanup;
-			allocatedOnHeap = TRUE;
 		}
 
 		// Convert UTF-8 → UTF-16
@@ -555,7 +553,7 @@ extern "C" {
 
 	cleanup:
 		// Free the heap buffer if it was allocated
-		if (allocatedOnHeap)
+		if (WideBuffer != TmpStackBuffer && WideBuffer != NULL)
 			HeapFree(GetProcessHeap(), 0, WideBuffer);
 
 #undef STACK_BUFFER_SIZE
