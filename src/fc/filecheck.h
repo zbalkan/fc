@@ -696,46 +696,15 @@ extern "C" {
 				return FC_DIFFERENT;
 			}
 
-			// If case is ignored, the original line contents may differ (e.g., "abc" vs "ABC").
-			// We skip memcmp in that case because hashes already include normalization.
-			if (!(Config->Flags & FC_IGNORE_CASE))
+			// If hashes match, we only need a final memory comparison if the comparison
+			// is strictly case-sensitive AND whitespace-sensitive. In all other modes,
+			// the normalized hash is the definitive source of truth.
+			if (!(Config->Flags & FC_IGNORE_CASE) && !(Config->Flags & FC_IGNORE_WS))
 			{
-				// Fallback exact match check
-				// If FC_IGNORE_WS is set, skip whitespace in comparison
-				if (Config->Flags & FC_IGNORE_WS)
+				if (LineA->Length != LineB->Length ||
+					RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
 				{
-					const char* a = LineA->Text;
-					const char* b = LineB->Text;
-					size_t la = LineA->Length, lb = LineB->Length;
-					size_t ia = 0, ib = 0;
-					while (ia < la && ib < lb)
-					{
-						while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
-						while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
-						if (ia < la && ib < lb)
-						{
-							if (a[ia] != b[ib])
-							{
-								return FC_DIFFERENT;
-							}
-							++ia; ++ib;
-						}
-					}
-					// Skip trailing whitespace
-					while (ia < la && (a[ia] == ' ' || a[ia] == '\t')) ++ia;
-					while (ib < lb && (b[ib] == ' ' || b[ib] == '\t')) ++ib;
-					if (ia != la || ib != lb)
-					{
-						return FC_DIFFERENT;
-					}
-				}
-				else
-				{
-					if (LineA->Length != LineB->Length ||
-						RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
-					{
-						return FC_DIFFERENT;
-					}
+					return FC_DIFFERENT;
 				}
 			}
 		}
