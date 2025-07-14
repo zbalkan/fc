@@ -986,15 +986,106 @@ extern "C" {
 	}
 
 	/**
-		 * @brief Processes the final LCS result to report differences via the callback.
-		 * @internal
-		 * @param Context The user context containing file paths and line buffers.
-		 * @param LcsA Array of matching line indices from file A.
-		 * @param LcsB Array of matching line indices from file B.
-		 * @param LcsLength The number of matching lines in the LCS.
-		 * @return FC_OK if files are identical, FC_DIFFERENT otherwise.
-		 */
-	static FC_RESULT _FC_ProcessLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const size_t* LcsA, _In_ const size_t* LcsB, _In_ size_t LcsLength) {
+	 * @brief Filters an LCS result to enforce a resynchronization threshold.
+	 *
+	 * This function processes an optimal LCS result and keeps only "stable anchors"—
+	 * runs of consecutive matches that are at least `ResyncLines` long. This emulates
+	 * the behavior of fc.exe's /nnnn switch by discarding shorter, potentially
+	 * coincidental matches and consolidating differences into larger blocks.
+	 * @internal
+	 *
+	 * @param LcsA              The array of LCS indices for file A.
+	 * @param LcsB              The array of LCS indices for file B.
+	 * @param LcsLength         The length of the input LCS arrays.
+	 * @param ResyncLines       The minimum number of consecutive lines to be considered a stable anchor.
+	 * @param[out] pFilteredLcsA A pointer to receive the new, heap-allocated filtered array of indices for file A. The caller must free this.
+	 * @param[out] pFilteredLcsB A pointer to receive the new, heap-allocated filtered array of indices for file B. The caller must free this.
+	 * @return The length of the new filtered LCS. Returns 0 on memory allocation failure.
+	 */
+	static size_t
+		_FC_FilterLcsForResync(
+			_In_ const size_t* LcsA,
+			_In_ const size_t* LcsB,
+			_In_ size_t LcsLength,
+			_In_ UINT ResyncLines,
+			_Outptr_result_buffer_maybenull_(*pFilteredLcsA) size_t** pFilteredLcsA,
+			_Outptr_result_buffer_maybenull_(*pFilteredLcsB) size_t** pFilteredLcsB)
+	{
+		*pFilteredLcsA = NULL;
+		*pFilteredLcsB = NULL;
+
+		// If no resync threshold is set (or is 1), or if there's nothing to filter,
+		// just make a copy of the original LCS.
+		if (LcsLength == 0 || ResyncLines <= 1)
+		{
+			if (LcsLength > 0)
+			{
+				*pFilteredLcsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
+				*pFilteredLcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
+				if (!*pFilteredLcsA || !*pFilteredLcsB) return 0; // Allocation failed
+				memcpy(*pFilteredLcsA, LcsA, LcsLength * sizeof(size_t));
+				memcpy(*pFilteredLcsB, LcsB, LcsLength * sizeof(size_t));
+			}
+			return LcsLength;
+		}
+
+		_FC_BUFFER FilteredA, FilteredB;
+		_FC_BufferInit(&FilteredA, sizeof(size_t));
+		_FC_BufferInit(&FilteredB, sizeof(size_t));
+
+		for (size_t i = 0; i < LcsLength; )
+		{
+			size_t runStart = i;
+			size_t runEnd = i;
+			// Find the end of the current run of consecutive matching lines.
+			while (runEnd + 1 < LcsLength &&
+				LcsA[runEnd + 1] == LcsA[runEnd] + 1 &&
+				LcsB[runEnd + 1] == LcsB[runEnd] + 1)
+			{
+				runEnd++;
+			}
+
+			size_t runLength = (runEnd - runStart) + 1;
+			if (runLength >= ResyncLines)
+			{
+				// This run is a stable anchor, so keep it.
+				if (!_FC_BufferAppendRange(&FilteredA, &LcsA[runStart], runLength) ||
+					!_FC_BufferAppendRange(&FilteredB, &LcsB[runStart], runLength))
+				{
+					// On failure, free what we've allocated and return 0.
+					_FC_BufferFree(&FilteredA);
+					_FC_BufferFree(&FilteredB);
+					return 0;
+				}
+			}
+
+			i = runEnd + 1;
+		}
+
+		// Transfer ownership of the buffer's data to the output pointers.
+		*pFilteredLcsA = (size_t*)FilteredA.pData;
+		*pFilteredLcsB = (size_t*)FilteredB.pData;
+		return FilteredA.Count;
+	}
+
+	/**
+	 * @brief Processes the final LCS result to report differences via the callback.
+	 * @internal
+	 * @param Context The user context containing file paths and line buffers.
+	 * @param Config The main comparison configuration, containing the callback pointer.
+	 * @param LcsA Array of matching line indices from file A.
+	 * @param LcsB Array of matching line indices from file B.
+	 * @param LcsLength The number of matching lines in the LCS.
+	 * @return FC_OK if files are identical, FC_DIFFERENT otherwise.
+	 */
+	static FC_RESULT
+		_FC_ProcessLcs(
+			_In_ const FC_USER_CONTEXT* Context,
+			_In_ const FC_CONFIG* Config, // Add this parameter
+			_In_ const size_t* LcsA,
+			_In_ const size_t* LcsB,
+			_In_ size_t LcsLength)
+	{
 		const _FC_BUFFER* pBufferA = Context->Lines1;
 		const _FC_BUFFER* pBufferB = Context->Lines2;
 
@@ -1018,7 +1109,8 @@ extern "C" {
 				block.EndA = LcsLineA;
 				block.StartB = IndexB;
 				block.EndB = LcsLineB;
-				Context->DiffCallback(Context, &block);
+				// CORRECTED: Call the callback from the Config struct, not the Context.
+				Config->DiffCallback(Context, &block);
 			}
 			IndexA = LcsLineA + 1;
 			IndexB = LcsLineB + 1;
@@ -1027,29 +1119,26 @@ extern "C" {
 	}
 
 	/**
-	 * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
-	 * @internal
-	 * @param pBufferA The buffer of processed lines for file A.
-	 * @param pBufferB The buffer of processed lines for file B.
-	 * @param Config The main comparison configuration.
-	 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
-	 */
-	 /**
-	  * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
-	  * @internal
-	  * @param Context The user context containing file paths, line buffers, and user data.
-	  * @param Config The main comparison configuration.
-	  * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
-	  */
-	static FC_RESULT _FC_FindLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const FC_CONFIG* Config) {
+		 * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
+		 * @internal
+		 * @param Context The user context containing file paths, line buffers, and user data.
+		 * @param Config The main comparison	configuration.
+		 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
+		 */
+	static FC_RESULT
+		_FC_FindLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const FC_CONFIG* Config) {
 		const _FC_BUFFER* pBufferA = Context->Lines1;
 		const _FC_BUFFER* pBufferB = Context->Lines2;
 
 		FC_RESULT Result = FC_OK;
 		_FC_LCS_CONTEXT Ctx = { 0 };
 		_FC_MATCH* MatchPool = NULL;
-		size_t* LcsA = NULL, * LcsB = NULL;
 		_FC_HASH_MAP MapB = { 0 };
+
+		size_t* LcsA = NULL;
+		size_t* LcsB = NULL;
+		size_t* FilteredLcsA = NULL;
+		size_t* FilteredLcsB = NULL;
 
 		if (pBufferA->Count == 0 && pBufferB->Count == 0) return FC_OK;
 		if (pBufferA->Count > 0 && pBufferB->Count == 0) return FC_DIFFERENT;
@@ -1132,8 +1221,20 @@ extern "C" {
 		}
 
 		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) Result = FC_OK;
-		else Result = _FC_ProcessLcs(Context, LcsA, LcsB, LcsLength);
+		else {
+			size_t FilteredLcsLength = _FC_FilterLcsForResync(
+				LcsA, LcsB, LcsLength, Config->ResyncLines, &FilteredLcsA, &FilteredLcsB);
 
+			if (LcsLength > 0 && FilteredLcsLength == 0 && (!FilteredLcsA || !FilteredLcsB))
+			{
+				// This indicates a memory allocation failure inside the filter function.
+				Result = FC_ERROR_MEMORY;
+				goto cleanup;
+			}
+
+			// Process the (potentially filtered) results to show differences.
+			Result = _FC_ProcessLcs(Context, Config, FilteredLcsA, FilteredLcsB, FilteredLcsLength);
+		}
 	cleanup:
 		_FC_HashMapFree(&MapB);
 		if (MatchPool) HeapFree(GetProcessHeap(), 0, MatchPool);
@@ -1142,6 +1243,9 @@ extern "C" {
 		if (Ctx.PredecessorsB) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsB);
 		if (LcsA) HeapFree(GetProcessHeap(), 0, LcsA);
 		if (LcsB) HeapFree(GetProcessHeap(), 0, LcsB);
+		// The filtered arrays are now owned by these pointers, so we must free them.
+		if (FilteredLcsA) HeapFree(GetProcessHeap(), 0, FilteredLcsA);
+		if (FilteredLcsB) HeapFree(GetProcessHeap(), 0, FilteredLcsB);
 		return Result;
 	}
 

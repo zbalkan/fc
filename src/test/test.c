@@ -93,22 +93,6 @@ static void ConcatPath(
 	HeapFree(GetProcessHeap(), 0, ext);
 }
 
-// Default callback printing differences
-static void WINAPI TestCallback(
-	_In_opt_ void* UserData,
-	_In_z_ const char* Message,
-	_In_ int Line1,
-	_In_ int Line2)
-{
-	/*HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD written;
-	size_t len;
-	if (SUCCEEDED(StringCchLengthA(Message, STRSAFE_MAX_CCH, &len))) {
-		WriteConsoleA(h, Message, (DWORD)len, &written, NULL);
-		WriteConsoleA(h, "\r\n", 2, &written, NULL);
-	}*/
-}
-
 /**
  * @brief A context structure for capturing callback data during tests.
  */
