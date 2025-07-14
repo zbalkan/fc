@@ -12,26 +12,47 @@
 #include <wchar.h>  // For wcsncmp, wprintf
 #include <ctype.h>  // For iswdigit, towupper
 
- //
- // Default callback to print comparison results to the console.
- //
+ /**
+	  * @brief Callback for handling text-based differences.
+	  * @note This is currently a placeholder and does not produce rich output.
+	  */
 static void
-DefaultOutputCallback(
-	_In_opt_ void* UserData,
-	_In_ const char* Message,
-	_In_ int Line1,
-	_In_ int Line2)
+TextDiffCallback(
+	_In_ const FC_USER_CONTEXT* Context,
+	_In_ const FC_DIFF_BLOCK* Block)
 {
-	// UserData is not used in this implementation.
-	(void)UserData;
+	// This is a placeholder for rich text diff output, which is a future task.
+	printf("Difference block of type %d found.\n", Block->Type);
+}
 
-	if (Line1 >= 0 && Line2 >= 0)
+/**
+ * @brief Callback for handling binary differences.
+ *
+ * This function formats and prints binary differences to the console in a
+ * style compatible with the standard fc.exe utility. It handles both
+ * byte-level mismatches and file size differences.
+ *
+ * @param Context The user context, providing file paths.
+ * @param Block The difference block. For byte mismatches, the fields are
+ * repurposed: StartA holds the offset, EndA holds the byte from file 1,
+ * and EndB holds the byte from file 2. For size mismatches, StartA and
+ * StartB hold the respective file sizes.
+ */
+static void
+BinaryDiffCallback(
+	_In_ const FC_USER_CONTEXT* Context,
+	_In_ const FC_DIFF_BLOCK* Block)
+{
+	if (Block->Type == FC_DIFF_TYPE_SIZE)
 	{
-		printf("%s (Line %d vs %d)\n", Message, Line1, Line2);
+		if (Block->StartA > Block->StartB)
+			wprintf(L"FC: %s longer than %s\n", Context->Path1, Context->Path2);
+		else
+			wprintf(L"FC: %s shorter than %s\n", Context->Path1, Context->Path2);
 	}
-	else
+	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
-		printf("%s\n", Message);
+		printf("%08zX: %02X %02X\n", Block->StartA, (unsigned char)Block->EndA, (unsigned char)Block->EndB);
 	}
 }
 
@@ -58,8 +79,8 @@ PrintUsage(void)
 _Success_(return == TRUE)
 static BOOL
 ParseNumericOption(
-	_In_z_ const WCHAR* OptionString,
-	_Out_ UINT* Value,
+	_In_z_ const WCHAR * OptionString,
+	_Out_ UINT * Value,
 	_In_ UINT MinValue,
 	_In_ UINT MaxValue)
 {
@@ -102,7 +123,7 @@ static const OPTION_MAP g_OptionMap[] = {
 int
 wmain(
 	_In_ int argc,
-	_In_reads_(argc) WCHAR* argv[])
+	_In_reads_(argc) WCHAR * argv[])
 {
 	if (argc < 3)
 	{
@@ -117,7 +138,14 @@ wmain(
 	Config.Flags = 0;
 	Config.ResyncLines = 2;
 	Config.BufferLines = 100;
-	Config.Output = DefaultOutputCallback;
+	if (Config.Mode == FC_MODE_BINARY)
+	{
+		Config.DiffCallback = BinaryDiffCallback;
+	}
+	else
+	{
+		Config.DiffCallback = TextDiffCallback;
+	}
 	Config.UserData = NULL;
 
 	int ArgIndex = 1;
@@ -162,7 +190,6 @@ wmain(
 					wprintf(L"Invalid option: %s\n", Option);
 					return -1;
 				}
-
 			}
 		}
 		else
@@ -175,7 +202,11 @@ wmain(
 	const WCHAR* File1 = argv[argc - 2];
 	const WCHAR* File2 = argv[argc - 1];
 
-	// Call the wide-character version of the comparison function for best performance
+	if (Config.Mode == FC_MODE_BINARY)
+	{
+		wprintf(L"Comparing files %s and %s\n", File1, File2);
+	}
+
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
 	switch (Result)

@@ -44,7 +44,6 @@ static void Throw(_In_z_ const WCHAR* msg, _In_opt_z_ const WCHAR* path)
 	ExitProcess(1);
 }
 
-
 inline static WCHAR* AllocWcharPath()
 {
 	WCHAR* ret = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(WCHAR));
@@ -94,20 +93,28 @@ static void ConcatPath(
 	HeapFree(GetProcessHeap(), 0, ext);
 }
 
-// Default callback printing differences
-static void WINAPI TestCallback(
-	_In_opt_ void* UserData,
-	_In_z_ const char* Message,
-	_In_ int Line1,
-	_In_ int Line2)
+/**
+ * @brief A context structure for capturing callback data during tests.
+ */
+typedef struct {
+	int CallbackCount;          /**< The number of times the callback was invoked. */
+	FC_DIFF_BLOCK Blocks[10];   /**< An array to store the data from the first 10 callbacks. */
+} DIFF_TEST_CONTEXT;
+
+/**
+ * @brief A test callback that captures structured diff block data into a context object.
+ */
+static void
+StructuredOutputCallback(
+	_In_ const FC_USER_CONTEXT* Context,
+	_In_ const FC_DIFF_BLOCK* Block)
 {
-	/*HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD written;
-	size_t len;
-	if (SUCCEEDED(StringCchLengthA(Message, STRSAFE_MAX_CCH, &len))) {
-		WriteConsoleA(h, Message, (DWORD)len, &written, NULL);
-		WriteConsoleA(h, "\r\n", 2, &written, NULL);
-	}*/
+	DIFF_TEST_CONTEXT* testCtx = (DIFF_TEST_CONTEXT*)Context->UserData;
+	if (testCtx->CallbackCount < 10)
+	{
+		testCtx->Blocks[testCtx->CallbackCount] = *Block;
+	}
+	testCtx->CallbackCount++;
 }
 
 #define WRITE_STR_FILE(path, str) do { size_t cch; if (FAILED(StringCchLengthA(str, STRSAFE_MAX_CCH, &cch))) Throw(L"Bad string", NULL); \
@@ -136,8 +143,8 @@ static void Test_TextAsciiIdentical(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ascii_id1.txt", p1);
 	ConcatPath(baseDir, L"ascii_id2.txt", p2);
 	WRITE_STR_FILE(p1, "Line1\nLine2\n"); WRITE_STR_FILE(p2, "Line1\nLine2\n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
-
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_OK);
@@ -159,7 +166,7 @@ static void Test_TextAsciiDifferentContent(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ascii_diff2.txt", p2);
 	WRITE_STR_FILE(p1, "Line1\nLine2\n");
 	WRITE_STR_FILE(p2, "LineX\nLineY\n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -181,7 +188,7 @@ static void Test_CaseSensitivityWithSensitive(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"case2.txt", p2);
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);	cfg.Flags = 0;
@@ -203,7 +210,7 @@ static void Test_CaseSensitivityWithInsensitive(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"case2.txt", p2);
 	WRITE_STR_FILE(p1, "Hello World\n");
 	WRITE_STR_FILE(p2, "hello world\n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -226,7 +233,7 @@ static void Test_WhitespaceWithSensitive(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ws2.txt", p2);
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -249,7 +256,7 @@ static void Test_WhitespaceWithInsensitive(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ws2.txt", p2);
 	WRITE_STR_FILE(p1, "Test\n");
 	WRITE_STR_FILE(p2, "  Test  \n");
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -272,7 +279,7 @@ static void Test_TabsWithExpanded(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"tab2.txt", p2);
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -295,7 +302,7 @@ static void Test_TabsWithRaw(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"tab2.txt", p2);
 	WRITE_STR_FILE(p1, "A\tB\n");
 	WRITE_STR_FILE(p2, "A    B\n"); // 4 spaces
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -322,7 +329,8 @@ static void Test_UnicodeUtf8Match(const WCHAR* baseDir)
 	// write raw UTF-8
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p1);
 	if (!WriteDataFile(p2, utf8, (DWORD)strlen(utf8))) Throw(L"UTF8 write failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_UNICODE; cfg.UserData = &testCtx;
+
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -347,7 +355,7 @@ static void Test_UnicodeDiacritics(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"unicode_diac2.txt", p2);
 	if (!WriteDataFile(p1, a, (DWORD)strlen(a))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, b, (DWORD)strlen(b))) Throw(L"write failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_UNICODE; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -370,7 +378,7 @@ static void Test_UnicodeEmojiMultiline(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"unicode_emoji2.txt", p2);
 	if (!WriteDataFile(p1, content, (DWORD)strlen(content))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, content, (DWORD)strlen(content))) Throw(L"write failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_UNICODE; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -400,7 +408,7 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 
 	// without BOM
 	WRITE_STR_FILE(p2, text);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_TEXT_UNICODE;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_UNICODE; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -423,7 +431,8 @@ static void Test_BinaryExactMatch(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"bin2.dat", p2);
 	if (!WriteDataFile(p1, data, sizeof(data))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, data, sizeof(data))) Throw(L"write bin failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_BINARY; cfg.UserData = &testCtx;
+
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -447,7 +456,7 @@ static void Test_BinaryMiddleDiff(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"bin_mid2.dat", p2);
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_BINARY; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -471,7 +480,7 @@ static void Test_BinarySizeDiff(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"bin_sz2.dat", p2);
 	if (!WriteDataFile(p1, d1, sizeof(d1))) Throw(L"write bin failed", p1);
 	if (!WriteDataFile(p2, d2, sizeof(d2))) Throw(L"write bin failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_BINARY;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_BINARY; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -496,7 +505,7 @@ static void Test_AutoAsciiVsBinary(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"auto_bin.dat", p2);
 	WRITE_STR_FILE(p1, text);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -521,7 +530,7 @@ static void Test_AutoUnicodeVsBinary(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"auto_bin2.dat", p2);
 	if (!WriteDataFile(p1, utf8, (DWORD)strlen(utf8))) Throw(L"write failed", p1);
 	if (!WriteDataFile(p2, bin, sizeof(bin))) Throw(L"write failed", p2);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -549,7 +558,7 @@ static void Test_AutoBinaryVsEmpty(const WCHAR* baseDir)
 	HANDLE h = CreateFileW(p2, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h == INVALID_HANDLE_VALUE) Throw(L"create empty failed", p2);
 	CloseHandle(h);
-	FC_CONFIG cfg = { 0 }; cfg.Output = TestCallback; cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -569,24 +578,21 @@ static void Test_UTF8WrapperValidPath(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ünicode.txt", pWide);
 	WRITE_STR_FILE(pWide, "X\n");
 	ConvertWideToUtf8OrExit(pWide, pUtf8, sizeof(pUtf8));
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+
 	ASSERT_TRUE(FC_CompareFilesUtf8(pUtf8, pUtf8, &cfg) == FC_OK);
 }
 static void Test_UTF8WrapperInvalidPath(const WCHAR* baseDir)
 {
 	const char bad[] = { (char)0xC3, (char)0x28, 0 };
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+
 	ASSERT_TRUE(FC_CompareFilesUtf8(bad, bad, &cfg) == FC_ERROR_INVALID_PARAM);
 }
 static void Test_ErrorNullPathPointer(const WCHAR* baseDir)
 {
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+
 	ASSERT_TRUE(FC_CompareFilesUtf8("", NULL, &cfg) == FC_ERROR_INVALID_PARAM);
 }
 static void Test_ErrorNullConfigPointer(const WCHAR* baseDir)
@@ -606,10 +612,7 @@ static void Test_ErrorNonExistentFile(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	// Path that does not exist
 	ConvertWideToUtf8OrExit(L"C:\\this\\path\\should\\not\\exist\\ever.txt", u2, UTF8_BUFFER_SIZE);
-
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	// Comparing an existing file with a non-existing one should result in an I/O error.
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_IO);
@@ -631,10 +634,7 @@ static void Test_ErrorReservedDeviceName(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	// "CON" is a reserved device name and should be rejected by the canonicalization.
 	ConvertWideToUtf8OrExit(L"CON", u2, UTF8_BUFFER_SIZE);
-
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
 
@@ -655,10 +655,8 @@ static void Test_ErrorRawDevicePath(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	// Raw device paths should be rejected for security.
 	ConvertWideToUtf8OrExit(L"\\\\.\\PhysicalDrive0", u2, UTF8_BUFFER_SIZE);
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
 
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
 
@@ -679,10 +677,7 @@ static void Test_ErrorEmptyPath(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	// An empty path is invalid.
 	u2[0] = '\0';
-
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_ERROR_INVALID_PARAM);
 
@@ -700,9 +695,8 @@ static void Test_ErrorNullOutputCallback(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "data");
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Mode = FC_MODE_AUTO;
-	cfg.Output = NULL; // The Output callback is mandatory.
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = NULL; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
+
 
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u1, &cfg) == FC_ERROR_INVALID_PARAM);
 
@@ -724,9 +718,7 @@ static void Test_EmptyVsEmpty(const WCHAR* baseDir)
 	if (h1 != INVALID_HANDLE_VALUE) CloseHandle(h1);
 	if (h2 != INVALID_HANDLE_VALUE) CloseHandle(h2);
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -777,12 +769,11 @@ static void Test_VeryLargeFile(const WCHAR* baseDir)
 		}
 
 		FC_CONFIG cfg = { 0 };
-		cfg.Output = TestCallback;
+		cfg.DiffCallback = StructuredOutputCallback;
 		cfg.Mode = FC_MODE_BINARY;
 
 		ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 		testResult = (FC_CompareFilesUtf8(u1, u1, &cfg) == FC_OK);
-
 	} while (0);
 
 	// --- Cleanup ---
@@ -802,7 +793,6 @@ static void Test_VeryLargeFile(const WCHAR* baseDir)
 	ASSERT_TRUE(TRUE);
 }
 
-
 static void Test_MixedLineEndings(const WCHAR* baseDir)
 {
 	WCHAR* p1 = AllocWcharPath();
@@ -815,9 +805,7 @@ static void Test_MixedLineEndings(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Line1\r\nLine2\nLine3\r");
 	WRITE_STR_FILE(p2, "Line1\nLine2\nLine3\n");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -841,9 +829,7 @@ static void Test_NoFinalNewline(const WCHAR* baseDir)
 	WRITE_STR_FILE(p1, "Line1\n");
 	WRITE_STR_FILE(p2, "Line1");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -883,9 +869,7 @@ static void Test_ExtremelyLongLine(const WCHAR* baseDir)
 	}
 	HeapFree(GetProcessHeap(), 0, buffer);
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -910,9 +894,7 @@ static void Test_WhitespaceOnlyFile(const WCHAR* baseDir)
 	HANDLE h = CreateFileW(p2, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_TEXT_ASCII;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
 	cfg.Flags = FC_IGNORE_WS;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
@@ -943,9 +925,7 @@ static void Test_ForwardSlashesInPath(const WCHAR* baseDir)
 		}
 	}
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -970,9 +950,7 @@ static void Test_RelativePathTraversal(const WCHAR* baseDir)
 	// Build a path like C:\path\to\temp\FileCheckTests\..\FileCheckTests\relative_file.txt
 	StringCchPrintfW(p2, MAX_LONG_PATH, L"%s\\..\\%s\\relative_file.txt", baseDir, L"FileCheckTests");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -997,9 +975,7 @@ static void Test_TrailingDotInPath(const WCHAR* baseDir)
 	// Create a path ending with a dot
 	StringCchPrintfW(p2, MAX_LONG_PATH, L"%s.", p1);
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -1025,9 +1001,7 @@ static void Test_AlternateDataStream(const WCHAR* baseDir)
 	StringCchPrintfW(p2, MAX_LONG_PATH, L"%s:stream", p1);
 	WRITE_STR_FILE(p2, "ads data");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
@@ -1049,9 +1023,7 @@ static void Test_CompareFileToItself(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"self_compare.txt", p1);
 	WRITE_STR_FILE(p1, "some content");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = FC_MODE_AUTO;
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_AUTO; cfg.UserData = &testCtx;
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u1, &cfg) == FC_OK);
@@ -1068,9 +1040,9 @@ static void Test_InvalidMode(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"invalid_mode.txt", p1);
 	WRITE_STR_FILE(p1, "abc");
 
-	FC_CONFIG cfg = { 0 };
-	cfg.Output = TestCallback;
-	cfg.Mode = (FC_MODE)99; // Invalid mode enum
+	DIFF_TEST_CONTEXT testCtx = { 0 };	FC_CONFIG cfg = { 0 }; cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = (FC_MODE)99; // Invalid mode enum
+	cfg.UserData = &testCtx;
+
 
 	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
 	// The library should fall back to a default behavior.
@@ -1081,6 +1053,46 @@ static void Test_InvalidMode(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 }
 
+static void Test_StructuredOutput_Deletion(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_del1.txt", p1); ConcatPath(baseDir, L"s_del2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineB\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_DELETE);
+	ASSERT_TRUE(testCtx.Blocks[0].StartA == 1 && testCtx.Blocks[0].EndA == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+static void Test_StructuredOutput_Addition(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_add1.txt", p1); ConcatPath(baseDir, L"s_add2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineB\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_ADD);
+	ASSERT_TRUE(testCtx.Blocks[0].StartB == 1 && testCtx.Blocks[0].EndB == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+static void Test_StructuredOutput_Change(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_chg1.txt", p1); ConcatPath(baseDir, L"s_chg2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineB\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineX\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	ASSERT_TRUE(testCtx.Blocks[0].StartA == 1 && testCtx.Blocks[0].EndA == 2);
+	ASSERT_TRUE(testCtx.Blocks[0].StartB == 1 && testCtx.Blocks[0].EndB == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
 
 int wmain(void)
 {
@@ -1130,6 +1142,9 @@ int wmain(void)
 	//Test_AlternateDataStream(testDir);
 	Test_CompareFileToItself(testDir);
 	Test_InvalidMode(testDir);
+	Test_StructuredOutput_Deletion(testDir);
+	Test_StructuredOutput_Addition(testDir);
+	Test_StructuredOutput_Change(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteConsoleW(hConsole, L"\n\n", 2, NULL, NULL);
