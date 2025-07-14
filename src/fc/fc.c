@@ -138,14 +138,6 @@ wmain(
 	Config.Flags = 0;
 	Config.ResyncLines = 2;
 	Config.BufferLines = 100;
-	if (Config.Mode == FC_MODE_BINARY)
-	{
-		Config.DiffCallback = BinaryDiffCallback;
-	}
-	else
-	{
-		Config.DiffCallback = TextDiffCallback;
-	}
 	Config.UserData = NULL;
 
 	int ArgIndex = 1;
@@ -199,13 +191,15 @@ wmain(
 		}
 	}
 
+	if (Config.Mode == FC_MODE_BINARY)
+		Config.DiffCallback = BinaryDiffCallback;
+	else
+		Config.DiffCallback = TextDiffCallback;
+
 	const WCHAR* File1 = argv[argc - 2];
 	const WCHAR* File2 = argv[argc - 1];
 
-	if (Config.Mode == FC_MODE_BINARY)
-	{
-		wprintf(L"Comparing files %s and %s\n", File1, File2);
-	}
+	wprintf(L"Comparing files %s and %s\n", File1, File2);
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
