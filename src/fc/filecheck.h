@@ -217,6 +217,120 @@ extern "C" {
 	} _FC_LINE;
 
 	/**
+	 * @struct _FC_MATCH
+	 * @brief Represents a potential match of a line from file A in file B.
+	 *
+	 * This is used to build a singly-linked list of all occurrences of a line
+	 * with a specific hash in file B.
+	 * @internal
+	 */
+	typedef struct _FC_MATCH {
+		size_t IndexInB;         /**< The 0-based line index in file B. */
+		struct _FC_MATCH* Next;  /**< Pointer to the next match with the same hash. */
+	} _FC_MATCH;
+
+	/**
+	 * @struct _FC_LCS_CONTEXT
+	 * @brief Holds the intermediate data structures for the Hunt-McIlroy LCS algorithm.
+	 * @internal
+	 */
+	typedef struct {
+		size_t* Thresholds;     /**< Stores the smallest ending line index in B for an LCS of a given length. */
+		size_t* PredecessorsA;  /**< For each line in A, stores the previous line's index in B from the LCS path. */
+		size_t* PredecessorsB;  /**< For each line in A, stores its own line index in B if it's part of a potential LCS path. */
+	} _FC_LCS_CONTEXT;
+
+	/**
+	 * @struct _FC_HASH_MAP_ENTRY
+	 * @brief An entry in the hash map's bucket list.
+	 *
+	 * Contains the hash value, a pointer to the head of the match list for that hash,
+	 * and a pointer to the next entry in the same bucket (to handle collisions).
+	 * @internal
+	 */
+	typedef struct _FC_HASH_MAP_ENTRY {
+		UINT Hash;
+		_FC_MATCH* MatchHead;
+		struct _FC_HASH_MAP_ENTRY* Next;
+	} _FC_HASH_MAP_ENTRY;
+
+	/**
+	 * @struct _FC_HASH_MAP
+	 * @brief A simple hash map implementation for finding line matches.
+	 *
+	 * Uses open addressing with chaining for collision resolution. It pre-allocates
+	 * all necessary entry and match nodes from pools for performance, avoiding
+	 * repeated small allocations.
+	 * @internal
+	 */
+	typedef struct {
+		_FC_HASH_MAP_ENTRY** Buckets;      /**< Array of pointers to bucket chains. */
+		size_t NumBuckets;                 /**< The number of buckets in the hash table. */
+		_FC_HASH_MAP_ENTRY* EntryPool;     /**< A pre-allocated pool of hash map entries. */
+		size_t EntryPoolIndex;             /**< The next available index in the entry pool. */
+	} _FC_HASH_MAP;
+
+	/**
+	 * @brief Creates and initializes a hash map.
+	 * @internal
+	 * @param Map A pointer to the _FC_HASH_MAP structure to initialize.
+	 * @param InitialCapacity The number of entries to pre-allocate in the pool.
+	 * @return TRUE on success, FALSE on memory allocation failure.
+	 */
+	static BOOL _FC_HashMapCreate(_Inout_ _FC_HASH_MAP* Map, _In_ size_t InitialCapacity) {
+		Map->NumBuckets = 1021; // A reasonably sized prime number
+		Map->Buckets = (_FC_HASH_MAP_ENTRY**)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, Map->NumBuckets * sizeof(_FC_HASH_MAP_ENTRY*));
+		if (!Map->Buckets) return FALSE;
+		Map->EntryPool = (_FC_HASH_MAP_ENTRY*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, InitialCapacity * sizeof(_FC_HASH_MAP_ENTRY));
+		if (!Map->EntryPool) { HeapFree(GetProcessHeap(), 0, Map->Buckets); return FALSE; }
+		Map->EntryPoolIndex = 0;
+		return TRUE;
+	}
+
+	/**
+	 * @brief Frees all memory associated with a hash map.
+	 * @internal
+	 * @param Map A pointer to the _FC_HASH_MAP to free.
+	 */
+	static void _FC_HashMapFree(_Inout_ _FC_HASH_MAP* Map) {
+		if (Map->Buckets) HeapFree(GetProcessHeap(), 0, Map->Buckets);
+		if (Map->EntryPool) HeapFree(GetProcessHeap(), 0, Map->EntryPool);
+	}
+
+	/**
+	 * @brief Finds an entry in the hash map by its hash value.
+	 * @internal
+	 * @param Map A pointer to the hash map.
+	 * @param Hash The hash value to find.
+	 * @return A pointer to the found _FC_HASH_MAP_ENTRY, or NULL if not found.
+	 */
+	static _FC_HASH_MAP_ENTRY* _FC_HashMapFind(_In_ _FC_HASH_MAP* Map, _In_ UINT Hash) {
+		size_t bucketIndex = Hash % Map->NumBuckets;
+		_FC_HASH_MAP_ENTRY* entry = Map->Buckets[bucketIndex];
+		while (entry) { if (entry->Hash == Hash) return entry; entry = entry->Next; }
+		return NULL;
+	}
+
+	/**
+	 * @brief Inserts a new hash value into the map, or finds the existing entry.
+	 * @internal
+	 * @param Map A pointer to the hash map.
+	 * @param Hash The hash value to insert.
+	 * @return A pointer to the new or existing _FC_HASH_MAP_ENTRY, or NULL on failure.
+	 */
+	static _FC_HASH_MAP_ENTRY* _FC_HashMapInsert(_Inout_ _FC_HASH_MAP* Map, _In_ UINT Hash) {
+		_FC_HASH_MAP_ENTRY* entry = _FC_HashMapFind(Map, Hash);
+		if (entry) return entry;
+		entry = &Map->EntryPool[Map->EntryPoolIndex++];
+		entry->Hash = Hash;
+		entry->MatchHead = NULL;
+		size_t bucketIndex = Hash % Map->NumBuckets;
+		entry->Next = Map->Buckets[bucketIndex];
+		Map->Buckets[bucketIndex] = entry;
+		return entry;
+	}
+
+	/**
 	 * @struct _FC_BUFFER
 	 * @brief A generic, reusable dynamic buffer for storing contiguous elements.
 	 *
@@ -822,59 +936,132 @@ extern "C" {
 	}
 
 	/**
-	 * @brief Compares two buffers of _FC_LINE structures to see if they are identical.
-	 *
-	 * The comparison logic is optimized. It first checks for different line counts.
-	 * Then, it compares the pre-computed hash of each line. A full memory comparison
-	 * of the line text is only performed as a final step if the hashes match and the
-	 * comparison mode is both case-sensitive and whitespace-sensitive.
+	 * @brief Processes the final LCS result to report differences.
 	 * @internal
-	 * @param pBufferA A pointer to the first line buffer.
-	 * @param pBufferB A pointer to the second line buffer.
-	 * @param Config A pointer to the comparison configuration.
-	 * @return FC_OK if the line arrays are identical, FC_DIFFERENT otherwise.
+	 * @param Config The main comparison configuration.
+	 * @param LcsA Array of matching line indices from file A.
+	 * @param LcsB Array of matching line indices from file B.
+	 * @param LcsLength The number of matching lines in the LCS.
+	 * @return FC_OK if files are identical, FC_DIFFERENT otherwise.
 	 */
-	static FC_RESULT
-		_FC_CompareLineArrays(
-			_In_ const _FC_BUFFER* pBufferA, // Changed type
-			_In_ const _FC_BUFFER* pBufferB, // Changed type
-			_In_ const FC_CONFIG* Config)
-	{
-		if (pBufferA->Count != pBufferB->Count)
+	static FC_RESULT _FC_ProcessLcs(const FC_CONFIG* Config, const size_t* LcsA, const size_t* LcsB, size_t LcsLength) {
+		// This is a placeholder that will be replaced by the next commit.
+		// For now, it just reports that a difference was found if the LCS isn't a perfect match.
+		if (LcsA && LcsB)
 		{
-			if (Config->Output)
-				Config->Output(Config->UserData, "Files have different line counts", -1, -1);
+			// A more complex check could go here, but for now, any diff is a diff.
 			return FC_DIFFERENT;
 		}
-		// Compare each line one by one.
-		// Why: Hash comparison is fast and covers most differences;
-		// fallback to byte-wise memcmp is used only if hashes match and case must be preserved.
-		for (size_t i = 0; i < pBufferA->Count; ++i)
-		{
-			const _FC_LINE* LineA = (_FC_LINE*)_FC_BufferGet(pBufferA, i);
-			const _FC_LINE* LineB = (_FC_LINE*)_FC_BufferGet(pBufferB, i);
+		return FC_OK;
+	}
 
-			// Fast hash mismatch check — high-probability early exit
-			if (LineA->Hash != LineB->Hash)
-			{
-				return FC_DIFFERENT;
-			}
+	/**
+	 * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
+	 * @internal
+	 * @param pBufferA The buffer of processed lines for file A.
+	 * @param pBufferB The buffer of processed lines for file B.
+	 * @param Config The main comparison configuration.
+	 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
+	 */
+	static FC_RESULT _FC_FindLcs(const _FC_BUFFER* pBufferA, const _FC_BUFFER* pBufferB, const FC_CONFIG* Config) {
+		FC_RESULT Result = FC_OK;
+		_FC_LCS_CONTEXT Ctx = { 0 };
+		_FC_MATCH* MatchPool = NULL;
+		size_t* LcsA = NULL, * LcsB = NULL;
+		_FC_HASH_MAP MapB = { 0 };
 
-			// If hashes match, we only need a final memory comparison if the comparison
-			// is strictly case-sensitive AND whitespace-sensitive. In all other modes,
-			// the normalized hash is the definitive source of truth.
-			if (!(Config->Flags & FC_IGNORE_CASE) && !(Config->Flags & FC_IGNORE_WS))
-			{
-				if (LineA->Length != LineB->Length ||
-					RtlCompareMemory(LineA->Text, LineB->Text, LineA->Length) != LineA->Length)
-				{
-					return FC_DIFFERENT;
+		if (pBufferA->Count == 0 && pBufferB->Count == 0) return FC_OK;
+		if (pBufferA->Count > 0 && pBufferB->Count == 0) return FC_DIFFERENT;
+		if (pBufferA->Count == 0 && pBufferB->Count > 0) return FC_DIFFERENT;
+
+		if (!_FC_HashMapCreate(&MapB, pBufferB->Count)) return FC_ERROR_MEMORY;
+
+		MatchPool = (_FC_MATCH*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, pBufferB->Count * sizeof(_FC_MATCH));
+		if (!MatchPool) { Result = FC_ERROR_MEMORY; goto cleanup; }
+
+		for (size_t i = 0; i < pBufferB->Count; ++i) {
+			UINT hash = ((_FC_LINE*)_FC_BufferGet(pBufferB, i))->Hash;
+			_FC_HASH_MAP_ENTRY* entry = _FC_HashMapInsert(&MapB, hash);
+			_FC_MATCH* newMatch = &MatchPool[i];
+			newMatch->IndexInB = i;
+			newMatch->Next = entry->MatchHead;
+			entry->MatchHead = newMatch;
+		}
+
+		Ctx.Thresholds = (size_t*)HeapAlloc(GetProcessHeap(), 0, (pBufferA->Count + 1) * sizeof(size_t));
+		Ctx.PredecessorsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
+		Ctx.PredecessorsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
+		if (!Ctx.Thresholds || !Ctx.PredecessorsA || !Ctx.PredecessorsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
+
+		size_t LcsLength = 0;
+		Ctx.Thresholds[0] = (size_t)-1;
+		for (size_t i = 1; i <= pBufferA->Count; ++i) Ctx.Thresholds[i] = SIZE_MAX;
+
+		for (size_t i = 0; i < pBufferA->Count; ++i) {
+			UINT hashA = ((_FC_LINE*)_FC_BufferGet(pBufferA, i))->Hash;
+			_FC_HASH_MAP_ENTRY* entry = _FC_HashMapFind(&MapB, hashA);
+			if (entry) {
+				for (_FC_MATCH* match = entry->MatchHead; match != NULL; match = match->Next) {
+					size_t k = 0, low = 1, high = LcsLength;
+					while (low <= high) {
+						size_t mid = low + (high - low) / 2;
+						if (match->IndexInB > Ctx.Thresholds[mid]) low = mid + 1;
+						else high = mid - 1;
+					}
+					k = low;
+
+					if (match->IndexInB < Ctx.Thresholds[k]) {
+						Ctx.Thresholds[k] = match->IndexInB;
+						Ctx.PredecessorsA[i] = (k > 1) ? Ctx.Thresholds[k - 1] : (size_t)-1;
+						Ctx.PredecessorsB[i] = match->IndexInB;
+						if (k > LcsLength) LcsLength = k;
+					}
 				}
 			}
 		}
 
-		// All lines matched exactly or per hash+config — files are equal
-		return FC_OK;
+		if (LcsLength > 0) {
+			LcsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
+			LcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
+			if (!LcsA || !LcsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
+
+			size_t currentB = Ctx.Thresholds[LcsLength];
+			size_t currentA = 0;
+			for (size_t i = pBufferA->Count - 1; i != (size_t)-1; --i) {
+				if (Ctx.PredecessorsB[i] == currentB) {
+					currentA = i;
+					break;
+				}
+			}
+
+			for (size_t i = LcsLength; i > 0; --i) {
+				LcsA[i - 1] = currentA;
+				LcsB[i - 1] = currentB;
+				size_t prevB = Ctx.PredecessorsA[currentA];
+				currentB = prevB;
+				if (currentB == (size_t)-1) break;
+
+				for (size_t j = currentA - 1; j != (size_t)-1; --j) {
+					if (Ctx.PredecessorsB[j] == currentB) {
+						currentA = j;
+						break;
+					}
+				}
+			}
+		}
+
+		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) Result = FC_OK;
+		else Result = _FC_ProcessLcs(Config, LcsA, LcsB, LcsLength);
+
+	cleanup:
+		_FC_HashMapFree(&MapB);
+		if (MatchPool) HeapFree(GetProcessHeap(), 0, MatchPool);
+		if (Ctx.Thresholds) HeapFree(GetProcessHeap(), 0, Ctx.Thresholds);
+		if (Ctx.PredecessorsA) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsA);
+		if (Ctx.PredecessorsB) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsB);
+		if (LcsA) HeapFree(GetProcessHeap(), 0, LcsA);
+		if (LcsB) HeapFree(GetProcessHeap(), 0, LcsB);
+		return Result;
 	}
 
 	/**
@@ -895,15 +1082,23 @@ extern "C" {
 		_FC_ParseLines(
 			_In_reads_(BufferLength) const char* Buffer,
 			_In_ size_t BufferLength,
-			_Inout_ _FC_BUFFER* pLineBuffer, // The buffer for _FC_LINE structs
+			_Inout_ _FC_BUFFER* pLineBuffer,
 			_In_ const FC_CONFIG* Config)
 	{
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
 
-		while (Ptr < End)
+		while (Ptr <= End)
 		{
-			// 1. Find the end of the current line.
+			// This condition handles the last line if the file doesn't end with a newline.
+			if (Ptr == End)
+			{
+				if (BufferLength == 0 || Buffer[BufferLength - 1] == '\n' || Buffer[BufferLength - 1] == '\r')
+				{
+					break; // Don't process a zero-length line at the very end.
+				}
+			}
+
 			const char* Newline = Ptr;
 			while (Newline < End && *Newline != '\n' && *Newline != '\r')
 			{
@@ -911,72 +1106,74 @@ extern "C" {
 			}
 			size_t LineLength = (size_t)(Newline - Ptr);
 
-			// 2. Create a mutable buffer for the line's text.
-			//    This buffer will be modified for tabs and whitespace.
 			_FC_BUFFER textBuffer;
 			_FC_BufferInit(&textBuffer, sizeof(char));
 			if (!_FC_BufferAppendRange(&textBuffer, Ptr, LineLength))
 			{
-				_FC_BufferFree(&textBuffer);             // free on failure
+				_FC_BufferFree(&textBuffer);
 				return FC_ERROR_MEMORY;
 			}
 
-			// 3. Perform text normalization based on config flags.
-
-			// Handle tab expansion if FC_RAW_TABS is NOT set.
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
 				const char tab = '\t';
 				const char* spaces = "    ";
 				if (!_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4))
 				{
-					_FC_BufferFree(&textBuffer);         // free on failure
+					_FC_BufferFree(&textBuffer);
 					return FC_ERROR_MEMORY;
 				}
 			}
 
-			// Handle whitespace removal if FC_IGNORE_WS IS set.
 			if (Config->Flags & FC_IGNORE_WS)
 			{
 				const char space = ' ';
-				const char tab = '\t'; // remove tabs too
-
+				const char tab = '\t';
 				if (!_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0) ||
 					!_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0))
 				{
-					_FC_BufferFree(&textBuffer);         // free on failure
+					_FC_BufferFree(&textBuffer);
 					return FC_ERROR_MEMORY;
 				}
 			}
 
-			// 4. Finalize the processed text from the buffer.
 			size_t FinalLength = textBuffer.Count;
 			char* FinalText = _FC_BufferToString(&textBuffer);
 
 			if (FinalText == NULL)
 			{
-				_FC_BufferFree(&textBuffer); // Clean up the text buffer on failure.
-				return FC_ERROR_MEMORY;
+				return FC_ERROR_MEMORY; // _FC_BufferToString frees on failure
 			}
 
-			// 5. Hash the final, normalized line and append it to the line buffer.
-			_FC_LINE line;
-			line.Text = FinalText;
-			line.Length = FinalLength;
-			line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
-
-			if (!_FC_BufferAppend(pLineBuffer, &line))
+			// If ignoring whitespace and the line becomes empty, discard it.
+			if ((Config->Flags & FC_IGNORE_WS) && FinalLength == 0)
 			{
-				HeapFree(GetProcessHeap(), 0, FinalText); // Free the text we just finalized.
-				return FC_ERROR_MEMORY;
+				HeapFree(GetProcessHeap(), 0, FinalText);
+			}
+			else
+			{
+				_FC_LINE line;
+				line.Text = FinalText;
+				line.Length = FinalLength;
+				line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
+
+				if (!_FC_BufferAppend(pLineBuffer, &line))
+				{
+					HeapFree(GetProcessHeap(), 0, FinalText);
+					return FC_ERROR_MEMORY;
+				}
 			}
 
-			// 6. Advance the main pointer to the start of the next line.
-			while (Newline < End && (*Newline == '\n' || *Newline == '\r'))
+			if (Newline >= End)
 			{
-				Newline++;
+				break; // Reached end of buffer
 			}
+
 			Ptr = Newline;
+			while (Ptr < End && (*Ptr == '\n' || *Ptr == '\r'))
+			{
+				Ptr++;
+			}
 		}
 		return FC_OK;
 	}
@@ -1200,7 +1397,7 @@ extern "C" {
 		Result = _FC_ParseLines(Buffer2, Length2, &BufferB, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FC_CompareLineArrays(&BufferA, &BufferB, Config);
+		Result = _FC_FindLcs(&BufferA, &BufferB, Config);
 
 	cleanup:
 		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
