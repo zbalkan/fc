@@ -110,6 +110,30 @@ static void WINAPI TestCallback(
 	}*/
 }
 
+/**
+ * @brief A context structure for capturing callback data during tests.
+ */
+typedef struct {
+	int CallbackCount;          /**< The number of times the callback was invoked. */
+	FC_DIFF_BLOCK Blocks[10];   /**< An array to store the data from the first 10 callbacks. */
+} DIFF_TEST_CONTEXT;
+
+/**
+ * @brief A test callback that captures structured diff block data into a context object.
+ */
+static void
+StructuredOutputCallback(
+	_In_ const FC_USER_CONTEXT* Context,
+	_In_ const FC_DIFF_BLOCK* Block)
+{
+	DIFF_TEST_CONTEXT* testCtx = (DIFF_TEST_CONTEXT*)Context->UserData;
+	if (testCtx->CallbackCount < 10)
+	{
+		testCtx->Blocks[testCtx->CallbackCount] = *Block;
+	}
+	testCtx->CallbackCount++;
+}
+
 #define WRITE_STR_FILE(path, str) do { size_t cch; if (FAILED(StringCchLengthA(str, STRSAFE_MAX_CCH, &cch))) Throw(L"Bad string", NULL); \
     if (!WriteDataFile(path, str, (DWORD)cch)) Throw(L"Write failed", path); } while(0)
 
@@ -1081,6 +1105,48 @@ static void Test_InvalidMode(const WCHAR* baseDir)
 	HeapFree(GetProcessHeap(), 0, u1);
 }
 
+static void Test_StructuredOutput_Deletion(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_del1.txt", p1); ConcatPath(baseDir, L"s_del2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineB\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_DELETE);
+	ASSERT_TRUE(testCtx.Blocks[0].StartA == 1 && testCtx.Blocks[0].EndA == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+static void Test_StructuredOutput_Addition(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_add1.txt", p1); ConcatPath(baseDir, L"s_add2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineB\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_ADD);
+	ASSERT_TRUE(testCtx.Blocks[0].StartB == 1 && testCtx.Blocks[0].EndB == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+static void Test_StructuredOutput_Change(const WCHAR* baseDir) {
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath(); char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+	ConcatPath(baseDir, L"s_chg1.txt", p1); ConcatPath(baseDir, L"s_chg2.txt", p2);
+	WRITE_STR_FILE(p1, "LineA\nLineB\nLineC\n"); WRITE_STR_FILE(p2, "LineA\nLineX\nLineC\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 }; FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback; cfg.Mode = FC_MODE_TEXT_ASCII; cfg.UserData = &testCtx;
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE); ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+	FC_CompareFilesUtf8(u1, u2, &cfg);
+	ASSERT_TRUE(testCtx.CallbackCount == 1);
+	ASSERT_TRUE(testCtx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	ASSERT_TRUE(testCtx.Blocks[0].StartA == 1 && testCtx.Blocks[0].EndA == 2);
+	ASSERT_TRUE(testCtx.Blocks[0].StartB == 1 && testCtx.Blocks[0].EndB == 2);
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+
+
 
 int wmain(void)
 {
@@ -1130,6 +1196,10 @@ int wmain(void)
 	//Test_AlternateDataStream(testDir);
 	Test_CompareFileToItself(testDir);
 	Test_InvalidMode(testDir);
+	Test_StructuredOutput_Deletion(testDir);
+	Test_StructuredOutput_Addition(testDir);
+	Test_StructuredOutput_Change(testDir);
+
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteConsoleW(hConsole, L"\n\n", 2, NULL, NULL);

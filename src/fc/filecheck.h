@@ -136,20 +136,74 @@ extern "C" {
 		_In_ int Line2);
 
 	/**
-	 * @struct FC_CONFIG
-	 * @brief Holds the configuration settings for a file comparison operation.
-	 *
-	 * An instance of this structure must be initialized and passed to the main
-	 * comparison functions to control their behavior.
+	 * @enum FC_DIFF_TYPE
+	 * @brief Describes the type of a difference found between two files.
 	 */
+	typedef enum {
+		FC_DIFF_TYPE_NONE,      /**< Should not be used. */
+		FC_DIFF_TYPE_CHANGE,    /**< A block of lines was changed from file A to file B. */
+		FC_DIFF_TYPE_DELETE,    /**< A block of lines from file A was deleted (not present in file B). */
+		FC_DIFF_TYPE_ADD,       /**< A block of lines from file B was added (not present in file A). */
+	} FC_DIFF_TYPE;
+
+	/**
+	 * @struct FC_DIFF_BLOCK
+	 * @brief Contains information about a single block of differences.
+	 *
+	 * For text comparisons, this describes a contiguous set of additions, deletions,
+	 * or changes. The indices are 0-based and exclusive of the end.
+	 */
+	typedef struct {
+		FC_DIFF_TYPE Type;      /**< The type of difference. */
+		size_t StartA;          /**< The starting line index in file A's line buffer. */
+		size_t EndA;            /**< The ending line index (exclusive) in file A's line buffer. */
+		size_t StartB;          /**< The starting line index in file B's line buffer. */
+		size_t EndB;            /**< The ending line index (exclusive) in file B's line buffer. */
+	} FC_DIFF_BLOCK;
+
+	typedef struct _FC_BUFFER _FC_BUFFER; // Forward declare for context struct
+
+	/**
+	 * @struct FC_USER_CONTEXT
+	 * @brief Provides the callback with full context about the comparison operation.
+	 *
+	 * This structure is passed to the `FC_DIFF_CALLBACK` and gives it access to the
+	 * original file paths, the parsed line buffers, and any user-defined data.
+	 */
+	typedef struct {
+		const WCHAR* Path1;         /**< The canonical path to the first file. */
+		const WCHAR* Path2;         /**< The canonical path to the second file. */
+		const _FC_BUFFER* Lines1;   /**< A pointer to the buffer of _FC_LINE structs for file 1. */
+		const _FC_BUFFER* Lines2;   /**< A pointer to the buffer of _FC_LINE structs for file 2. */
+		void* UserData;             /**< The user-defined data pointer from FC_CONFIG. */
+	} FC_USER_CONTEXT;
+
+	/**
+	 * @brief Defines the function pointer for a callback that reports structured differences.
+	 *
+	 * An application implements a function of this type to receive detailed information
+	 * about each block of differences found by the comparison algorithm.
+	 *
+	 * @param Context A pointer to the FC_USER_CONTEXT, providing full access to file paths and line data.
+	 * @param Block   A pointer to the FC_DIFF_BLOCK, describing the specific difference found.
+	 */
+	typedef void (*FC_DIFF_CALLBACK)(_In_ const FC_USER_CONTEXT* Context, _In_ const FC_DIFF_BLOCK* Block);
+
+	/**
+		 * @struct FC_CONFIG
+		 * @brief Holds the configuration settings for a file comparison operation.
+		 *
+		 * An instance of this structure must be initialized and passed to the main
+		 * comparison functions to control their behavior.
+		 */
 	typedef struct
 	{
-		FC_MODE Mode;               // Text, binary, or auto-detection mode.
-		UINT Flags;                 // Option flags from FC_* defines.
-		UINT ResyncLines;           // Reserved for future use.
-		UINT BufferLines;           // Reserved for future use.
-		FC_OUTPUT_CALLBACK Output;  // Callback function for diff messages.
-		void* UserData;             // User-defined data passed to the callback.
+		FC_MODE Mode;                   /**< Text, binary, or auto-detection mode. */
+		UINT Flags;                     /**< Option flags from FC_* defines. */
+		UINT ResyncLines;               /**< The number of matching lines to declare a resynchronization. */
+		UINT BufferLines;               /**< Reserved for future use. */
+		FC_DIFF_CALLBACK DiffCallback;  /**< The mandatory callback function for receiving structured diff reports. */
+		void* UserData;                 /**< A user-defined pointer passed to the callback function's context. */
 	} FC_CONFIG;
 
 	/* -------------------- Public API Functions -------------------- */
@@ -176,8 +230,8 @@ extern "C" {
 	 *
 	 * This is a convenience wrapper that converts paths to UTF-16 before comparison.
 	 *
-	 * @param Path1Utf8 Path to the first file, UTF-8 encoded.
-	 * @param Path2Utf8 Path to the second file, UTF-8 encoded.
+	 * @param Path1 Path to the first file, UTF-8 encoded.
+	 * @param Path2 Path to the second file, UTF-8 encoded.
 	 * @param Config A pointer to the comparison configuration structure.
 	 *
 	 * @return An FC_RESULT code indicating the outcome of the comparison.
@@ -936,23 +990,44 @@ extern "C" {
 	}
 
 	/**
-	 * @brief Processes the final LCS result to report differences.
-	 * @internal
-	 * @param Config The main comparison configuration.
-	 * @param LcsA Array of matching line indices from file A.
-	 * @param LcsB Array of matching line indices from file B.
-	 * @param LcsLength The number of matching lines in the LCS.
-	 * @return FC_OK if files are identical, FC_DIFFERENT otherwise.
-	 */
-	static FC_RESULT _FC_ProcessLcs(const FC_CONFIG* Config, const size_t* LcsA, const size_t* LcsB, size_t LcsLength) {
-		// This is a placeholder that will be replaced by the next commit.
-		// For now, it just reports that a difference was found if the LCS isn't a perfect match.
-		if (LcsA && LcsB)
-		{
-			// A more complex check could go here, but for now, any diff is a diff.
-			return FC_DIFFERENT;
+		 * @brief Processes the final LCS result to report differences via the callback.
+		 * @internal
+		 * @param Context The user context containing file paths and line buffers.
+		 * @param LcsA Array of matching line indices from file A.
+		 * @param LcsB Array of matching line indices from file B.
+		 * @param LcsLength The number of matching lines in the LCS.
+		 * @return FC_OK if files are identical, FC_DIFFERENT otherwise.
+		 */
+	static FC_RESULT _FC_ProcessLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const size_t* LcsA, _In_ const size_t* LcsB, _In_ size_t LcsLength) {
+		const _FC_BUFFER* pBufferA = Context->Lines1;
+		const _FC_BUFFER* pBufferB = Context->Lines2;
+
+		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) return FC_OK;
+
+		size_t IndexA = 0, IndexB = 0;
+		for (size_t i = 0; i <= LcsLength; ++i) {
+			size_t LcsLineA = (i < LcsLength) ? LcsA[i] : pBufferA->Count;
+			size_t LcsLineB = (i < LcsLength) ? LcsB[i] : pBufferB->Count;
+
+			BOOL hasAdds = (IndexB < LcsLineB);
+			BOOL hasDeletes = (IndexA < LcsLineA);
+
+			if (hasAdds || hasDeletes) {
+				FC_DIFF_BLOCK block = { 0 };
+				if (hasAdds && hasDeletes) block.Type = FC_DIFF_TYPE_CHANGE;
+				else if (hasAdds) block.Type = FC_DIFF_TYPE_ADD;
+				else block.Type = FC_DIFF_TYPE_DELETE;
+
+				block.StartA = IndexA;
+				block.EndA = LcsLineA;
+				block.StartB = IndexB;
+				block.EndB = LcsLineB;
+				Context->DiffCallback(Context, &block);
+			}
+			IndexA = LcsLineA + 1;
+			IndexB = LcsLineB + 1;
 		}
-		return FC_OK;
+		return FC_DIFFERENT;
 	}
 
 	/**
@@ -963,7 +1038,17 @@ extern "C" {
 	 * @param Config The main comparison configuration.
 	 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
 	 */
-	static FC_RESULT _FC_FindLcs(const _FC_BUFFER* pBufferA, const _FC_BUFFER* pBufferB, const FC_CONFIG* Config) {
+	 /**
+	  * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
+	  * @internal
+	  * @param Context The user context containing file paths, line buffers, and user data.
+	  * @param Config The main comparison configuration.
+	  * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
+	  */
+	static FC_RESULT _FC_FindLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const FC_CONFIG* Config) {
+		const _FC_BUFFER* pBufferA = Context->Lines1;
+		const _FC_BUFFER* pBufferB = Context->Lines2;
+
 		FC_RESULT Result = FC_OK;
 		_FC_LCS_CONTEXT Ctx = { 0 };
 		_FC_MATCH* MatchPool = NULL;
@@ -1051,7 +1136,7 @@ extern "C" {
 		}
 
 		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) Result = FC_OK;
-		else Result = _FC_ProcessLcs(Config, LcsA, LcsB, LcsLength);
+		else Result = _FC_ProcessLcs(Context, LcsA, LcsB, LcsLength);
 
 	cleanup:
 		_FC_HashMapFree(&MapB);
@@ -1397,7 +1482,8 @@ extern "C" {
 		Result = _FC_ParseLines(Buffer2, Length2, &BufferB, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		Result = _FC_FindLcs(&BufferA, &BufferB, Config);
+		FC_USER_CONTEXT UserCtx = { Path1, Path2, &BufferA, &BufferB, Config->UserData };
+		Result = _FC_FindLcs(&UserCtx, Config);
 
 	cleanup:
 		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
@@ -1719,8 +1805,8 @@ extern "C" {
 	 * converts them to wide (UTF-16) strings, and then calls the primary `FC_CompareFilesW`
 	 * function to perform the comparison.
 	 *
-	 * @param Path1Utf8 A null-terminated, UTF-8 encoded path to the first file.
-	 * @param Path2Utf8 A null-terminated, UTF-8 encoded path to the second file.
+	 * @param Path1 A null-terminated, UTF-8 encoded path to the first file.
+	 * @param Path2 A null-terminated, UTF-8 encoded path to the second file.
 	 * @param Config A pointer to the comparison configuration structure. This must not be NULL.
 	 *
 	 * @return An FC_RESULT code indicating the outcome of the comparison.
@@ -1730,21 +1816,21 @@ extern "C" {
 	 */
 	FC_RESULT
 		FC_CompareFilesUtf8(
-			_In_z_ const char* Path1Utf8,
-			_In_z_ const char* Path2Utf8,
+			_In_z_ const char* Path1,
+			_In_z_ const char* Path2,
 			_In_ const FC_CONFIG* Config)
 	{
 		FC_RESULT Result = FC_OK;
 		WCHAR* WidePath1 = NULL;
 		WCHAR* WidePath2 = NULL;
 
-		if (!Path1Utf8 || !Path2Utf8 || !Config || !Config->Output)
+		if (!Path1 || !Path2 || !Config || !Config->DiffCallback)
 		{
 			return FC_ERROR_INVALID_PARAM; // No cleanup needed, return directly.
 		}
 
 		// Convert paths, checking each one immediately.
-		WidePath1 = _FC_ConvertUtf8ToWide(Path1Utf8);
+		WidePath1 = _FC_ConvertUtf8ToWide(Path1);
 		if (WidePath1 == NULL)
 		{
 			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
@@ -1753,7 +1839,7 @@ extern "C" {
 			goto cleanup;
 		}
 
-		WidePath2 = _FC_ConvertUtf8ToWide(Path2Utf8);
+		WidePath2 = _FC_ConvertUtf8ToWide(Path2);
 		if (WidePath2 == NULL)
 		{
 			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
@@ -1801,8 +1887,7 @@ extern "C" {
 		WCHAR* CanonicalPath1 = NULL;
 		WCHAR* CanonicalPath2 = NULL;
 
-		if (!Path1 || !Path2 || !Config || !Config->Output)
-		{
+		if (!Path1 || !Path2 || !Config || !Config->DiffCallback) {
 			Result = FC_ERROR_INVALID_PARAM;
 			goto cleanup;
 		}
