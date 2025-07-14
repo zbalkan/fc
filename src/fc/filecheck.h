@@ -56,7 +56,6 @@ extern "C" {
 #define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
 	 /** @} */
 
-
 	/**
 	 * @enum RTL_PATH_TYPE
 	 * @brief Describes the type of a DOS-style path as interpreted by Windows internal path normalization routines.
@@ -144,6 +143,7 @@ extern "C" {
 		FC_DIFF_TYPE_CHANGE,    /**< A block of lines was changed from file A to file B. */
 		FC_DIFF_TYPE_DELETE,    /**< A block of lines from file A was deleted (not present in file B). */
 		FC_DIFF_TYPE_ADD,       /**< A block of lines from file B was added (not present in file A). */
+		FC_DIFF_TYPE_SIZE       /**< A special type indicating that two binary files have different sizes. */
 	} FC_DIFF_TYPE;
 
 	/**
@@ -161,7 +161,23 @@ extern "C" {
 		size_t EndB;            /**< The ending line index (exclusive) in file B's line buffer. */
 	} FC_DIFF_BLOCK;
 
-	typedef struct _FC_BUFFER _FC_BUFFER; // Forward declare for context struct
+	/**
+ * @struct _FC_BUFFER
+ * @brief A generic, reusable dynamic buffer for storing contiguous elements.
+ *
+ * This structure provides a type-agnostic, dynamic array implementation, used
+ * throughout the library to manage collections of lines (_FC_LINE) and characters (char).
+ * It handles its own memory management, growing as needed.
+ *
+ * @internal
+ */
+	typedef struct
+	{
+		void* pData;       // Pointer to the block of memory holding the elements.
+		size_t ElementSize; // The size of a single element (e.g., sizeof(char)).
+		size_t Count;       // The number of elements currently in the buffer.
+		size_t Capacity;    // The number of elements the buffer can hold before resizing.
+	} _FC_BUFFER;
 
 	/**
 	 * @struct FC_USER_CONTEXT
@@ -245,7 +261,6 @@ extern "C" {
 	/* -------------------- Internal Implementation (Private) -------------------- */
 
 	// All functions and structs below are not part of the public API.
-
 
 	static const WCHAR* const g_ReservedDevices[] = {
 		L"CON", L"PRN", L"AUX", L"NUL",
@@ -383,24 +398,6 @@ extern "C" {
 		Map->Buckets[bucketIndex] = entry;
 		return entry;
 	}
-
-	/**
-	 * @struct _FC_BUFFER
-	 * @brief A generic, reusable dynamic buffer for storing contiguous elements.
-	 *
-	 * This structure provides a type-agnostic, dynamic array implementation, used
-	 * throughout the library to manage collections of lines (_FC_LINE) and characters (char).
-	 * It handles its own memory management, growing as needed.
-	 *
-	 * @internal
-	 */
-	typedef struct
-	{
-		void* pData;       // Pointer to the block of memory holding the elements.
-		size_t ElementSize; // The size of a single element (e.g., sizeof(char)).
-		size_t Count;       // The number of elements currently in the buffer.
-		size_t Capacity;    // The number of elements the buffer can hold before resizing.
-	} _FC_BUFFER;
 
 	/**
 	 * @brief Initializes a new, empty buffer for elements of a specific size.
@@ -583,7 +580,6 @@ extern "C" {
 		}
 		return (size_t)-1;
 	}
-
 
 	/**
 	 * @brief Replaces all occurrences of a pattern with a new pattern.
@@ -1263,7 +1259,6 @@ extern "C" {
 		return FC_OK;
 	}
 
-
 	/**
 	 * @brief Reads the entire contents of a file into a new heap-allocated buffer.
 	 * @internal
@@ -1498,8 +1493,9 @@ extern "C" {
 	 * @brief Compares two files in binary mode.
 	 *
 	 * This function performs a byte-for-byte comparison of two files using memory-mapped I/O
-	 * for efficiency. It first checks if the file sizes are different. If they are the same,
-	 * it maps both files into memory and compares their contents.
+	 * for efficiency. It first checks if the file sizes are different and reports that via
+	 * the callback if so. If they are the same, it maps both files into memory and
+	 * iterates through them, calling the callback for every mismatched byte.
 	 * @internal
 	 * @param Path1 The path to the first file.
 	 * @param Path2 The path to the second file.
@@ -1536,9 +1532,11 @@ extern "C" {
 
 		if (File1Size.QuadPart != File2Size.QuadPart)
 		{
-			if (Config->Output != NULL)
+			if (Config->DiffCallback != NULL)
 			{
-				Config->Output(Config->UserData, "Files are different sizes", -1, -1);
+				FC_DIFF_BLOCK block = { FC_DIFF_TYPE_SIZE, (size_t)File1Size.QuadPart, (size_t)File1Size.QuadPart, (size_t)File2Size.QuadPart, (size_t)File2Size.QuadPart };
+				FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+				Config->DiffCallback(&BinContext, &block);
 			}
 			Result = FC_DIFFERENT;
 			goto cleanup;
@@ -1567,27 +1565,20 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Assume OK, change if difference is found
 		Result = FC_OK;
-		size_t FirstDifference = (size_t)-1;
-
-		// Consolidated loop to find the first difference and compare.
 		for (size_t i = 0; i < CompareSize; ++i)
 		{
 			if (Buffer1[i] != Buffer2[i])
 			{
-				FirstDifference = i;
-				Result = FC_DIFFERENT;
-				break;
-			}
-		}
-
-		if (Result == FC_DIFFERENT && Config->Output != NULL)
-		{
-			char Message[64];
-			if (_snprintf_s(Message, sizeof(Message), _TRUNCATE, "Binary diff at offset 0x%zx", FirstDifference) > 0)
-			{
-				Config->Output(Config->UserData, Message, -1, -1);
+				if (Result == FC_OK) Result = FC_DIFFERENT;
+				if (Config->DiffCallback != NULL)
+				{
+					// Repurpose block fields for byte-level diffs:
+					// StartA = Offset, EndA = Byte from File 1, EndB = Byte from File 2
+					FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
+					FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+					Config->DiffCallback(&BinContext, &block);
+				}
 			}
 		}
 
@@ -1796,7 +1787,6 @@ extern "C" {
 	//
 	// Main Implementation
 	//
-
 
 	/**
 	 * @brief Compares two files using UTF-8 encoded paths.
