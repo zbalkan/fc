@@ -222,42 +222,6 @@ extern "C" {
 		void* UserData;                 /**< A user-defined pointer passed to the callback function's context. */
 	} FC_CONFIG;
 
-	/* -------------------- Public API Functions -------------------- */
-
-	/**
-	 * @brief Compares two files using UTF-16 encoded paths. (Primary Function)
-	 *
-	 * Supports long paths and all modes (text, binary, auto).
-	 *
-	 * @param Path1 Path to the first file, UTF-16 encoded.
-	 * @param Path2 Path to the second file, UTF-16 encoded.
-	 * @param Config A pointer to the comparison configuration structure.
-	 *
-	 * @return An FC_RESULT code indicating the outcome of the comparison.
-	 */
-	FC_RESULT
-		FC_CompareFilesW(
-			_In_z_ const WCHAR* Path1,
-			_In_z_ const WCHAR* Path2,
-			_In_ const FC_CONFIG* Config);
-
-	/**
-	 * @brief Compares two files using UTF-8 encoded paths.
-	 *
-	 * This is a convenience wrapper that converts paths to UTF-16 before comparison.
-	 *
-	 * @param Path1 Path to the first file, UTF-8 encoded.
-	 * @param Path2 Path to the second file, UTF-8 encoded.
-	 * @param Config A pointer to the comparison configuration structure.
-	 *
-	 * @return An FC_RESULT code indicating the outcome of the comparison.
-	 */
-	FC_RESULT
-		FC_CompareFilesUtf8(
-			_In_z_ const char* Path1Utf8,
-			_In_z_ const char* Path2Utf8,
-			_In_ const FC_CONFIG* Config);
-
 	/* -------------------- Internal Implementation (Private) -------------------- */
 
 	// All functions and structs below are not part of the public API.
