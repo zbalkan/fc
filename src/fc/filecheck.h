@@ -1677,8 +1677,6 @@ extern "C" {
 				if (Result == FC_OK) Result = FC_DIFFERENT;
 				if (Config->DiffCallback != NULL)
 				{
-					// Repurpose block fields for byte-level diffs:
-					// StartA = Offset, EndA = Byte from File 1, EndB = Byte from File 2
 					FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
 					FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
 					Config->DiffCallback(&BinContext, &block);
