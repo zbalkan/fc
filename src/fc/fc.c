@@ -86,6 +86,7 @@ TextDiffCallback(
 	{
 		// Print first file block - use %ls for wide string explicitly
 		wprintf(L"***** %ls\n", Context->Path1);
+		fflush(stdout);  // Flush wide char output before switching to narrow
 		
 		// For CHANGE and DELETE, print lines from file 1
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
@@ -108,8 +109,10 @@ TextDiffCallback(
 			}
 		}
 		
+		fflush(stdout);  // Flush narrow char output before switching to wide
 		// Print second file block - use %ls for wide string explicitly
 		wprintf(L"***** %ls\n", Context->Path2);
+		fflush(stdout);  // Flush wide char output before switching to narrow
 		
 		// For CHANGE and ADD, print lines from file 2
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
@@ -134,6 +137,7 @@ TextDiffCallback(
 		
 		// Print closing marker
 		printf("*****\n");
+		fflush(stdout);  // Ensure output is written before returning
 		break;
 	}
 	
