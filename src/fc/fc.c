@@ -18,7 +18,6 @@
  */
 typedef struct {
 	UINT Flags;              /**< Configuration flags (e.g., FC_SHOW_LINE_NUMS). */
-	size_t FirstDiffBlock;   /**< Flag to track if this is the first difference block. */
 } TEXT_DIFF_USER_DATA;
 
 /**
@@ -58,8 +57,17 @@ TextDiffCallback(
 	_In_ const FC_USER_CONTEXT* Context,
 	_In_ const FC_DIFF_BLOCK* Block)
 {
+	// Defensive: Validate input parameters
+	if (Context == NULL || Block == NULL)
+		return;
+	
 	const _FC_BUFFER* Lines1 = Context->Lines1;
 	const _FC_BUFFER* Lines2 = Context->Lines2;
+	
+	// Defensive: Validate line buffers
+	if (Lines1 == NULL || Lines2 == NULL)
+		return;
+	
 	TEXT_DIFF_USER_DATA* UserData = (TEXT_DIFF_USER_DATA*)Context->UserData;
 	
 	// Get configuration flags
@@ -76,8 +84,8 @@ TextDiffCallback(
 	case FC_DIFF_TYPE_DELETE:
 	case FC_DIFF_TYPE_ADD:
 	{
-		// Print first file block
-		wprintf(L"***** %s\n", Context->Path1);
+		// Print first file block - use %ls for wide string explicitly
+		wprintf(L"***** %ls\n", Context->Path1);
 		
 		// For CHANGE and DELETE, print lines from file 1
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
@@ -100,8 +108,8 @@ TextDiffCallback(
 			}
 		}
 		
-		// Print second file block
-		wprintf(L"***** %s\n", Context->Path2);
+		// Print second file block - use %ls for wide string explicitly
+		wprintf(L"***** %ls\n", Context->Path2);
 		
 		// For CHANGE and ADD, print lines from file 2
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
@@ -156,9 +164,9 @@ BinaryDiffCallback(
 	if (Block->Type == FC_DIFF_TYPE_SIZE)
 	{
 		if (Block->StartA > Block->StartB)
-			wprintf(L"FC: %s longer than %s\n", Context->Path1, Context->Path2);
+			wprintf(L"FC: %ls longer than %ls\n", Context->Path1, Context->Path2);
 		else
-			wprintf(L"FC: %s shorter than %s\n", Context->Path1, Context->Path2);
+			wprintf(L"FC: %ls shorter than %ls\n", Context->Path1, Context->Path2);
 	}
 	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
@@ -311,14 +319,13 @@ wmain(
 		Config.DiffCallback = TextDiffCallback;
 		// Pass flags to the text diff callback through UserData
 		TextUserData.Flags = Config.Flags;
-		TextUserData.FirstDiffBlock = 1;
 		Config.UserData = &TextUserData;
 	}
 
 	const WCHAR* File1 = argv[argc - 2];
 	const WCHAR* File2 = argv[argc - 1];
 
-	wprintf(L"Comparing files %s and %s\n", File1, File2);
+	wprintf(L"Comparing files %ls and %ls\n", File1, File2);
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
