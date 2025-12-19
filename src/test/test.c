@@ -1094,6 +1094,170 @@ static void Test_StructuredOutput_Change(const WCHAR* baseDir) {
 	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2); HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
 }
 
+static void Test_TextAscii_MultipleHunks(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath();
+	char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"hunks1.txt", p1);
+	ConcatPath(baseDir, L"hunks2.txt", p2);
+
+	WRITE_STR_FILE(p1,
+		"A\n"
+		"X1\n"
+		"X2\n"
+		"B\n"
+		"Y1\n"
+		"Y2\n"
+		"C\n");
+
+	WRITE_STR_FILE(p2,
+		"A\n"
+		"Z1\n"
+		"Z2\n"
+		"B\n"
+		"W1\n"
+		"W2\n"
+		"C\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback;
+	cfg.Mode = FC_MODE_TEXT_ASCII;
+	cfg.UserData = &ctx;
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 2);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	ASSERT_TRUE(ctx.Blocks[1].Type == FC_DIFF_TYPE_CHANGE);
+
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2);
+	HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_TextAscii_ResyncThreshold(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath();
+	char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"resync1.txt", p1);
+	ConcatPath(baseDir, L"resync2.txt", p2);
+
+	WRITE_STR_FILE(p1, "A\nX\nB\nC\nD\n");
+	WRITE_STR_FILE(p2, "A\nY\nB\nC\nZ\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback;
+	cfg.Mode = FC_MODE_TEXT_ASCII;
+	cfg.ResyncLines = 3;   // /nnnn equivalent
+	cfg.UserData = &ctx;
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2);
+	HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_TextAscii_CollapsedChangeBlock(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath();
+	char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"abbr1.txt", p1);
+	ConcatPath(baseDir, L"abbr2.txt", p2);
+
+	WRITE_STR_FILE(p1, "A\nX\nY\nZ\nB\n");
+	WRITE_STR_FILE(p2, "A\n1\n2\n3\nB\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback;
+	cfg.Mode = FC_MODE_TEXT_ASCII;
+	cfg.UserData = &ctx;
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, p2);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
+
+static void Test_Binary_FirstMismatchOnly(const WCHAR* baseDir)
+{
+	unsigned char a[] = { 1,2,3,4,5 };
+	unsigned char b[] = { 1,2,9,8,7 };
+
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath();
+	char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"bin_fm1.dat", p1);
+	ConcatPath(baseDir, L"bin_fm2.dat", p2);
+	WriteDataFile(p1, a, sizeof(a));
+	WriteDataFile(p2, b, sizeof(b));
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback;
+	cfg.Mode = FC_MODE_BINARY;
+	cfg.UserData = &ctx;
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+
+	HeapFree(GetProcessHeap(), 0, p1); HeapFree(GetProcessHeap(), 0, p2);
+	HeapFree(GetProcessHeap(), 0, u1); HeapFree(GetProcessHeap(), 0, u2);
+}
+
+static void Test_TextAscii_LineNumberAccuracy(const WCHAR* baseDir)
+{
+	WCHAR* p1 = AllocWcharPath(), * p2 = AllocWcharPath();
+	char* u1 = AllocCharPath(), * u2 = AllocCharPath();
+
+	ConcatPath(baseDir, L"ln1.txt", p1);
+	ConcatPath(baseDir, L"ln2.txt", p2);
+
+	WRITE_STR_FILE(p1, "A\nB\nC\n");
+	WRITE_STR_FILE(p2, "A\nX\nC\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = { 0 };
+	cfg.DiffCallback = StructuredOutputCallback;
+	cfg.Mode = FC_MODE_TEXT_ASCII;
+	cfg.UserData = &ctx;
+
+	ConvertWideToUtf8OrExit(p1, u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(p2, u2, UTF8_BUFFER_SIZE);
+
+	ASSERT_TRUE(FC_CompareFilesUtf8(u1, u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 1);
+	ASSERT_TRUE(ctx.Blocks[0].StartB == 1);
+
+	HeapFree(GetProcessHeap(), 0, p1);
+	HeapFree(GetProcessHeap(), 0, p2);
+	HeapFree(GetProcessHeap(), 0, u1);
+	HeapFree(GetProcessHeap(), 0, u2);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1145,6 +1309,11 @@ int wmain(void)
 	Test_StructuredOutput_Deletion(testDir);
 	Test_StructuredOutput_Addition(testDir);
 	Test_StructuredOutput_Change(testDir);
+	Test_TextAscii_MultipleHunks(testDir);
+	Test_TextAscii_ResyncThreshold(testDir);
+	Test_TextAscii_CollapsedChangeBlock(testDir);
+	Test_Binary_FirstMismatchOnly(testDir);
+	Test_TextAscii_LineNumberAccuracy(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteConsoleW(hConsole, L"\n\n", 2, NULL, NULL);
