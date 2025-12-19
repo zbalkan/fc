@@ -29,10 +29,10 @@ The entire codebase is written in pure C and has no external dependencies beyond
     *   `/C` - Case-insensitive text comparison
     *   `/L` - ASCII text comparison
     *   `/W` - Ignore whitespace differences
-    *   `/N` - Display line numbers (flag is parsed but not yet used in output)
+    *   `/N` - Display line numbers in text mode output
     *   `/U` - Unicode-aware text comparison
     *   `/T` - Do not expand tabs to spaces
-*   **Current Limitation**: The library and tool can accurately report **if** files are different but do not yet generate a structured diff output showing the actual differing lines, unlike the standard `fc.exe`.
+*   **Text Diff Output**: The tool now displays line-by-line differences in a format compatible with Windows `fc.exe`, showing difference blocks with proper sectioning using asterisk markers.
 
 ## Getting Started
 
@@ -86,7 +86,26 @@ fc.exe /B program_v1.dll program_v2.dll
 
 # Perform a case-insensitive comparison on a UTF-8 file with non-ASCII characters
 fc.exe /C /U german_doc1.txt german_doc2.txt
+
+# Display line numbers in text comparison
+fc.exe /N file1.txt file2.txt
 ```
+
+### Example Text Diff Output
+
+When comparing two text files with differences, the output will show:
+```
+Comparing files file1.txt and file2.txt
+***** file1.txt
+Line from file 1
+Another line from file 1
+***** file2.txt
+Modified line in file 2
+Different content in file 2
+*****
+```
+
+The `/N` flag will add line numbers to each line of output.
 
 ## Using the `filecheck.h` Library
 
@@ -169,6 +188,12 @@ int main(void)
     return 0;
 }
 ```
+
+## Future Enhancements
+
+The following features are planned for future releases:
+- **`/A` flag**: Abbreviated output showing only the first and last line of each difference block with resynchronization context
+- Additional resynchronization indicators showing matching lines after difference blocks
 
 ## License
 

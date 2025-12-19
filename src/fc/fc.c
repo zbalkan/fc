@@ -13,16 +13,138 @@
 #include <ctype.h>  // For iswdigit, towupper
 
  /**
-	  * @brief Callback for handling text-based differences.
-	  * @note This is currently a placeholder and does not produce rich output.
-	  */
+ * @struct TEXT_DIFF_USER_DATA
+ * @brief User data structure for text diff callback to access configuration flags.
+ */
+typedef struct {
+	UINT Flags;              /**< Configuration flags (e.g., FC_SHOW_LINE_NUMS). */
+} TEXT_DIFF_USER_DATA;
+
+/**
+ * @brief Helper function to get a line from a buffer safely.
+ * @internal
+ * @param Buffer The line buffer.
+ * @param Index The line index.
+ * @return Pointer to the _FC_LINE struct, or NULL if index is out of bounds.
+ */
+static inline const _FC_LINE*
+GetLine(_In_ const _FC_BUFFER* Buffer, _In_ size_t Index)
+{
+	if (Index >= Buffer->Count)
+		return NULL;
+	return (const _FC_LINE*)((const char*)Buffer->pData + Index * Buffer->ElementSize);
+}
+
+/**
+ * @brief Callback for handling text-based differences in fc.exe compatible format.
+ *
+ * This function produces rich text diff output that matches the Windows fc.exe
+ * format. It displays difference blocks showing lines from both files, with
+ * proper block sectioning using asterisk markers.
+ *
+ * The output format is:
+ * ***** filename1
+ * <lines from file1 in the difference block>
+ * ***** filename2
+ * <lines from file2 in the difference block>
+ * *****
+ *
+ * @param Context The user context, providing file paths and line buffers.
+ * @param Block The difference block describing the change, deletion, or addition.
+ */
 static void
 TextDiffCallback(
 	_In_ const FC_USER_CONTEXT* Context,
 	_In_ const FC_DIFF_BLOCK* Block)
 {
-	// This is a placeholder for rich text diff output, which is a future task.
-	printf("Difference block of type %d found.\n", Block->Type);
+	// Defensive: Validate input parameters
+	if (Context == NULL || Block == NULL)
+		return;
+	
+	const _FC_BUFFER* Lines1 = Context->Lines1;
+	const _FC_BUFFER* Lines2 = Context->Lines2;
+	
+	// Defensive: Validate line buffers
+	if (Lines1 == NULL || Lines2 == NULL)
+		return;
+	
+	TEXT_DIFF_USER_DATA* UserData = (TEXT_DIFF_USER_DATA*)Context->UserData;
+	
+	// Get configuration flags
+	UINT Flags = 0;
+	if (UserData != NULL)
+		Flags = UserData->Flags;
+	
+	BOOL ShowLineNumbers = (Flags & FC_SHOW_LINE_NUMS) != 0;
+
+	// Handle different types of differences
+	switch (Block->Type)
+	{
+	case FC_DIFF_TYPE_CHANGE:
+	case FC_DIFF_TYPE_DELETE:
+	case FC_DIFF_TYPE_ADD:
+	{
+		// Print first file block - use %ls for wide string explicitly
+		wprintf(L"***** %ls\n", Context->Path1);
+		fflush(stdout);  // Flush wide char output before switching to narrow
+		
+		// For CHANGE and DELETE, print lines from file 1
+		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
+		{
+			for (size_t i = Block->StartA; i < Block->EndA; ++i)
+			{
+				const _FC_LINE* line = GetLine(Lines1, i);
+				if (line != NULL && line->Text != NULL)
+				{
+					if (ShowLineNumbers)
+					{
+						// Print line number (1-based) followed by ": " and the line text
+						printf("%zu: %s\n", i + 1, line->Text);
+					}
+					else
+					{
+						printf("%s\n", line->Text);
+					}
+				}
+			}
+		}
+		
+		fflush(stdout);  // Flush narrow char output before switching to wide
+		// Print second file block - use %ls for wide string explicitly
+		wprintf(L"***** %ls\n", Context->Path2);
+		fflush(stdout);  // Flush wide char output before switching to narrow
+		
+		// For CHANGE and ADD, print lines from file 2
+		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
+		{
+			for (size_t i = Block->StartB; i < Block->EndB; ++i)
+			{
+				const _FC_LINE* line = GetLine(Lines2, i);
+				if (line != NULL && line->Text != NULL)
+				{
+					if (ShowLineNumbers)
+					{
+						// Print line number (1-based) followed by ": " and the line text
+						printf("%zu: %s\n", i + 1, line->Text);
+					}
+					else
+					{
+						printf("%s\n", line->Text);
+					}
+				}
+			}
+		}
+		
+		// Print closing marker
+		printf("*****\n");
+		fflush(stdout);  // Ensure output is written before returning
+		break;
+	}
+	
+	default:
+		// Should not happen for text comparisons
+		break;
+	}
 }
 
 /**
@@ -46,9 +168,9 @@ BinaryDiffCallback(
 	if (Block->Type == FC_DIFF_TYPE_SIZE)
 	{
 		if (Block->StartA > Block->StartB)
-			wprintf(L"FC: %s longer than %s\n", Context->Path1, Context->Path2);
+			wprintf(L"FC: %ls longer than %ls\n", Context->Path1, Context->Path2);
 		else
-			wprintf(L"FC: %s shorter than %s\n", Context->Path1, Context->Path2);
+			wprintf(L"FC: %ls shorter than %ls\n", Context->Path1, Context->Path2);
 	}
 	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
@@ -132,6 +254,7 @@ wmain(
 	}
 
 	FC_CONFIG Config = { 0 }; // Initialize all fields to zero
+	TEXT_DIFF_USER_DATA TextUserData = { 0 }; // User data for text diff callback
 
 	// Set defaults
 	Config.Mode = FC_MODE_AUTO;
@@ -192,14 +315,21 @@ wmain(
 	}
 
 	if (Config.Mode == FC_MODE_BINARY)
+	{
 		Config.DiffCallback = BinaryDiffCallback;
+	}
 	else
+	{
 		Config.DiffCallback = TextDiffCallback;
+		// Pass flags to the text diff callback through UserData
+		TextUserData.Flags = Config.Flags;
+		Config.UserData = &TextUserData;
+	}
 
 	const WCHAR* File1 = argv[argc - 2];
 	const WCHAR* File2 = argv[argc - 1];
 
-	wprintf(L"Comparing files %s and %s\n", File1, File2);
+	wprintf(L"Comparing files %ls and %ls\n", File1, File2);
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
