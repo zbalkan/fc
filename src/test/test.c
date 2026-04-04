@@ -755,11 +755,11 @@ static void Test_ForwardSlashesInPath(const WCHAR* baseDir)
 		if (tp.p2[i] == L'\\')
 			tp.p2[i] = L'/';
 	}
-	DIFF_TEST_CONTEXT testCtx2 = { 0 };
-	FC_CONFIG cfg2 = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx2);
+	DIFF_TEST_CONTEXT testCtx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
-	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg2) == FC_OK);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
 	FreeTestPaths(&tp);
 }
 

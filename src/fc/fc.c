@@ -92,7 +92,9 @@ TextDiffCallback(
 	if (Lines1 == NULL || Lines2 == NULL)
 		return;
 
-	BOOL ShowLineNumbers = (((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags & FC_SHOW_LINE_NUMS) != 0;
+	BOOL ShowLineNumbers = FALSE;
+	if (Context->UserData != NULL)
+		ShowLineNumbers = (((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags & FC_SHOW_LINE_NUMS) != 0;
 
 	if (Block->Type == FC_DIFF_TYPE_CHANGE ||
 		Block->Type == FC_DIFF_TYPE_DELETE ||
