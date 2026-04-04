@@ -8,9 +8,10 @@
 
 #include "filecheck.h"
 #include <stdio.h>
-#include <stdlib.h> // For wcstoul
-#include <wchar.h>  // For wcsncmp, wprintf
-#include <ctype.h>  // For iswdigit, towupper
+#include <stdlib.h>  // For wcstoul
+#include <wchar.h>   // For wcsncmp, wprintf
+#include <ctype.h>   // For iswdigit, towupper
+#include <strsafe.h> // For StringCchLengthW
 
  /**
  * @struct TEXT_DIFF_USER_DATA
@@ -212,6 +213,305 @@ static const OPTION_MAP g_OptionMap[] = {
 	{ 0, 0, 0 } // Sentinel
 };
 
+/**
+ * @brief Checks whether a path contains a wildcard character ('*' or '?').
+ * @param Path The path to check.
+ * @return TRUE if the path contains a wildcard, FALSE otherwise.
+ */
+static BOOL
+ContainsWildcard(_In_z_ const WCHAR* Path)
+{
+	if (Path == NULL)
+		return FALSE;
+	for (size_t i = 0; Path[i] != L'\0'; i++)
+	{
+		if (Path[i] == L'*' || Path[i] == L'?')
+			return TRUE;
+	}
+	return FALSE;
+}
+
+/**
+ * @struct WILDCARD_EXPANSION
+ * @brief Holds an array of file paths that matched a wildcard pattern.
+ */
+typedef struct {
+	WCHAR** Paths;     /**< Array of heap-allocated file path strings. */
+	size_t  Count;     /**< Number of valid entries in Paths. */
+	size_t  Capacity;  /**< Allocated capacity of Paths. */
+} WILDCARD_EXPANSION;
+
+/**
+ * @brief Builds a full path by combining a directory prefix with a file name.
+ *
+ * Given a pattern such as "dir\\*.c", extracts the directory component
+ * "dir\\" and appends the supplied file name to produce "dir\\file.c".
+ * If the pattern contains no directory separator, the file name is used as-is.
+ *
+ * @param Pattern  The original wildcard pattern.
+ * @param FileName The file name returned by FindFirstFileW / FindNextFileW.
+ * @param OutBuf   Buffer that receives the combined path (MAX_PATH wide chars).
+ */
+static void
+BuildFullPath(
+	_In_z_  const WCHAR* Pattern,
+	_In_z_  const WCHAR* FileName,
+	_Out_writes_z_(MAX_PATH) WCHAR* OutBuf)
+{
+	// Find the last path separator in the pattern.
+	const WCHAR* LastSep = NULL;
+	for (const WCHAR* p = Pattern; *p; p++)
+	{
+		if (*p == L'\\' || *p == L'/')
+			LastSep = p;
+	}
+
+	if (LastSep != NULL)
+	{
+		// Copy the directory prefix (including the separator).
+		size_t PrefixLen = (size_t)(LastSep - Pattern) + 1;
+		if (PrefixLen >= MAX_PATH)
+			PrefixLen = MAX_PATH - 1;
+		CopyMemory(OutBuf, Pattern, PrefixLen * sizeof(WCHAR));
+		OutBuf[PrefixLen] = L'\0';
+
+		// Append the file name, truncating if necessary.
+		size_t NameLen;
+		if (FAILED(StringCchLengthW(FileName, MAX_PATH, &NameLen)))
+			NameLen = 0;
+		if (PrefixLen + NameLen >= MAX_PATH)
+			NameLen = MAX_PATH - PrefixLen - 1;
+		CopyMemory(OutBuf + PrefixLen, FileName, NameLen * sizeof(WCHAR));
+		OutBuf[PrefixLen + NameLen] = L'\0';
+	}
+	else
+	{
+		// No directory component – use the file name directly.
+		size_t NameLen;
+		if (FAILED(StringCchLengthW(FileName, MAX_PATH, &NameLen)))
+			NameLen = 0;
+		if (NameLen >= MAX_PATH)
+			NameLen = MAX_PATH - 1;
+		CopyMemory(OutBuf, FileName, NameLen * sizeof(WCHAR));
+		OutBuf[NameLen] = L'\0';
+	}
+}
+
+/**
+ * @brief Expands a wildcard pattern into a list of matching file paths.
+ *
+ * Uses FindFirstFileW / FindNextFileW to enumerate all files that match
+ * the supplied pattern.  Directories are skipped.
+ *
+ * @param Pattern The wildcard pattern (may include '*' and '?').
+ * @return A heap-allocated WILDCARD_EXPANSION, or NULL on allocation failure.
+ *         The caller must free this with FreeWildcardExpansion().
+ *         On success the structure's Count may be 0 if no files matched.
+ */
+static WILDCARD_EXPANSION*
+ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
+{
+	WILDCARD_EXPANSION* Exp = (WILDCARD_EXPANSION*)HeapAlloc(
+		GetProcessHeap(), HEAP_ZERO_MEMORY, sizeof(WILDCARD_EXPANSION));
+	if (Exp == NULL)
+		return NULL;
+
+	const size_t InitialCapacity = 16;
+	Exp->Paths = (WCHAR**)HeapAlloc(
+		GetProcessHeap(), HEAP_ZERO_MEMORY, InitialCapacity * sizeof(WCHAR*));
+	if (Exp->Paths == NULL)
+	{
+		HeapFree(GetProcessHeap(), 0, Exp);
+		return NULL;
+	}
+	Exp->Capacity = InitialCapacity;
+
+	WIN32_FIND_DATAW FindData;
+	HANDLE hFind = FindFirstFileW(Pattern, &FindData);
+	if (hFind == INVALID_HANDLE_VALUE)
+	{
+		// No matches – return an empty expansion.
+		return Exp;
+	}
+
+	do
+	{
+		// Skip directories.
+		if (FindData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			continue;
+
+		// Build the full path from the pattern directory and the found name.
+		WCHAR FullPath[MAX_PATH];
+		BuildFullPath(Pattern, FindData.cFileName, FullPath);
+
+		// Grow the array if needed.
+		if (Exp->Count >= Exp->Capacity)
+		{
+			size_t NewCapacity = Exp->Capacity * 2;
+			WCHAR** NewPaths = (WCHAR**)HeapReAlloc(
+				GetProcessHeap(), 0,
+				Exp->Paths, NewCapacity * sizeof(WCHAR*));
+			if (NewPaths == NULL)
+			{
+				FindClose(hFind);
+				// Partial results are still returned; caller will deal with them.
+				return Exp;
+			}
+			Exp->Paths = NewPaths;
+			Exp->Capacity = NewCapacity;
+		}
+
+		// Duplicate the full path onto the heap.
+		size_t PathLen;
+		if (FAILED(StringCchLengthW(FullPath, MAX_PATH, &PathLen)))
+			continue;
+
+		WCHAR* Dup = (WCHAR*)HeapAlloc(
+			GetProcessHeap(), 0, (PathLen + 1) * sizeof(WCHAR));
+		if (Dup == NULL)
+		{
+			FindClose(hFind);
+			return Exp;
+		}
+		CopyMemory(Dup, FullPath, (PathLen + 1) * sizeof(WCHAR));
+
+		Exp->Paths[Exp->Count++] = Dup;
+
+	} while (FindNextFileW(hFind, &FindData));
+
+	FindClose(hFind);
+	return Exp;
+}
+
+/**
+ * @brief Frees a WILDCARD_EXPANSION previously returned by ExpandWildcardPattern().
+ * @param Expansion The structure to free. May be NULL.
+ */
+static void
+FreeWildcardExpansion(_In_opt_ WILDCARD_EXPANSION* Expansion)
+{
+	if (Expansion == NULL)
+		return;
+
+	for (size_t i = 0; i < Expansion->Count; i++)
+	{
+		if (Expansion->Paths[i] != NULL)
+			HeapFree(GetProcessHeap(), 0, Expansion->Paths[i]);
+	}
+
+	if (Expansion->Paths != NULL)
+		HeapFree(GetProcessHeap(), 0, Expansion->Paths);
+
+	HeapFree(GetProcessHeap(), 0, Expansion);
+}
+
+/**
+ * @brief Performs file comparisons for wildcard-expanded patterns.
+ *
+ * Expands both arguments (one or both may contain wildcards) and compares
+ * each matched file pair in order.  If one side is a literal path it is
+ * paired with every file on the wildcard side.
+ *
+ * @param Pattern1 First file argument (may contain wildcards).
+ * @param Pattern2 Second file argument (may contain wildcards).
+ * @param Config   The already-configured FC_CONFIG to use for each comparison.
+ * @return 0 if all pairs are identical, 1 if any differ, 2 on I/O or memory
+ *         error, -1 on argument/usage errors.
+ */
+static int
+WildcardFileCompare(
+	_In_z_ const WCHAR* Pattern1,
+	_In_z_ const WCHAR* Pattern2,
+	_In_   FC_CONFIG*   Config)
+{
+	WILDCARD_EXPANSION* Exp1 = ExpandWildcardPattern(Pattern1);
+	WILDCARD_EXPANSION* Exp2 = ExpandWildcardPattern(Pattern2);
+
+	if (Exp1 == NULL || Exp2 == NULL)
+	{
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		fprintf(stderr, "Error: memory allocation failure during wildcard expansion.\n");
+		return 2;
+	}
+
+	if (Exp1->Count == 0 && Exp2->Count == 0)
+	{
+		wprintf(L"FC: no files found for %ls or %ls\n", Pattern1, Pattern2);
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		return -1;
+	}
+
+	if (Exp1->Count == 0)
+	{
+		wprintf(L"FC: no files found for %ls\n", Pattern1);
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		return -1;
+	}
+
+	if (Exp2->Count == 0)
+	{
+		wprintf(L"FC: no files found for %ls\n", Pattern2);
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		return -1;
+	}
+
+	// Determine the number of pairs to compare.
+	// If counts differ, compare up to the minimum and warn about the rest.
+	size_t PairCount;
+	if (Exp1->Count != Exp2->Count)
+	{
+		PairCount = Exp1->Count < Exp2->Count ? Exp1->Count : Exp2->Count;
+		wprintf(L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
+			Exp1->Count, Exp2->Count, PairCount);
+	}
+	else
+	{
+		PairCount = Exp1->Count;
+	}
+
+	int OverallResult = 0; // 0 = all identical so far
+
+	for (size_t i = 0; i < PairCount; i++)
+	{
+		const WCHAR* File1 = Exp1->Paths[i];
+		const WCHAR* File2 = Exp2->Paths[i];
+
+		wprintf(L"Comparing files %ls and %ls\n", File1, File2);
+
+		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
+
+		switch (Result)
+		{
+		case FC_OK:
+			// Identical – keep OverallResult as-is (0 or already 1).
+			break;
+		case FC_DIFFERENT:
+			if (OverallResult < 1)
+				OverallResult = 1;
+			break;
+		case FC_ERROR_IO:
+		case FC_ERROR_MEMORY:
+			fwprintf(stderr, L"Error during comparison of %ls and %ls: %d\n",
+				File1, File2, Result);
+			if (OverallResult < 2)
+				OverallResult = 2;
+			break;
+		default:
+			if (OverallResult == 0)
+				OverallResult = -1;
+			break;
+		}
+	}
+
+	FreeWildcardExpansion(Exp1);
+	FreeWildcardExpansion(Exp2);
+	return OverallResult;
+}
+
 //
 // Main entry point for the application.
 // Using wmain to natively support Unicode command-line arguments.
@@ -300,6 +600,11 @@ wmain(
 
 	const WCHAR* File1 = argv[argc - 2];
 	const WCHAR* File2 = argv[argc - 1];
+
+	if (ContainsWildcard(File1) || ContainsWildcard(File2))
+	{
+		return WildcardFileCompare(File1, File2, &Config);
+	}
 
 	wprintf(L"Comparing files %ls and %ls\n", File1, File2);
 
