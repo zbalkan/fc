@@ -36,6 +36,30 @@ GetLine(_In_ const _FC_BUFFER* Buffer, _In_ size_t Index)
 }
 
 /**
+ * @brief Prints a range of lines from a buffer to stdout.
+ * @internal
+ */
+static void
+PrintLines(
+	_In_ const _FC_BUFFER* Lines,
+	_In_ size_t Start,
+	_In_ size_t End,
+	_In_ BOOL ShowLineNumbers)
+{
+	for (size_t i = Start; i < End; ++i)
+	{
+		const _FC_LINE* line = GetLine(Lines, i);
+		if (line != NULL && line->Text != NULL)
+		{
+			if (ShowLineNumbers)
+				printf("%zu: %s\n", i + 1, line->Text);
+			else
+				printf("%s\n", line->Text);
+		}
+	}
+}
+
+/**
  * @brief Callback for handling text-based differences in fc.exe compatible format.
  *
  * This function produces rich text diff output that matches the Windows fc.exe
@@ -60,90 +84,40 @@ TextDiffCallback(
 	// Defensive: Validate input parameters
 	if (Context == NULL || Block == NULL)
 		return;
-	
+
 	const _FC_BUFFER* Lines1 = Context->Lines1;
 	const _FC_BUFFER* Lines2 = Context->Lines2;
-	
+
 	// Defensive: Validate line buffers
 	if (Lines1 == NULL || Lines2 == NULL)
 		return;
-	
-	TEXT_DIFF_USER_DATA* UserData = (TEXT_DIFF_USER_DATA*)Context->UserData;
-	
-	// Get configuration flags
-	UINT Flags = 0;
-	if (UserData != NULL)
-		Flags = UserData->Flags;
-	
-	BOOL ShowLineNumbers = (Flags & FC_SHOW_LINE_NUMS) != 0;
 
-	// Handle different types of differences
-	switch (Block->Type)
-	{
-	case FC_DIFF_TYPE_CHANGE:
-	case FC_DIFF_TYPE_DELETE:
-	case FC_DIFF_TYPE_ADD:
+	BOOL ShowLineNumbers = FALSE;
+	if (Context->UserData != NULL)
+		ShowLineNumbers = (((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags & FC_SHOW_LINE_NUMS) != 0;
+
+	if (Block->Type == FC_DIFF_TYPE_CHANGE ||
+		Block->Type == FC_DIFF_TYPE_DELETE ||
+		Block->Type == FC_DIFF_TYPE_ADD)
 	{
 		// Print first file block - use %ls for wide string explicitly
 		wprintf(L"***** %ls\n", Context->Path1);
 		fflush(stdout);  // Flush wide char output before switching to narrow
-		
-		// For CHANGE and DELETE, print lines from file 1
+
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
-		{
-			for (size_t i = Block->StartA; i < Block->EndA; ++i)
-			{
-				const _FC_LINE* line = GetLine(Lines1, i);
-				if (line != NULL && line->Text != NULL)
-				{
-					if (ShowLineNumbers)
-					{
-						// Print line number (1-based) followed by ": " and the line text
-						printf("%zu: %s\n", i + 1, line->Text);
-					}
-					else
-					{
-						printf("%s\n", line->Text);
-					}
-				}
-			}
-		}
-		
+			PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+
 		fflush(stdout);  // Flush narrow char output before switching to wide
 		// Print second file block - use %ls for wide string explicitly
 		wprintf(L"***** %ls\n", Context->Path2);
 		fflush(stdout);  // Flush wide char output before switching to narrow
-		
-		// For CHANGE and ADD, print lines from file 2
+
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
-		{
-			for (size_t i = Block->StartB; i < Block->EndB; ++i)
-			{
-				const _FC_LINE* line = GetLine(Lines2, i);
-				if (line != NULL && line->Text != NULL)
-				{
-					if (ShowLineNumbers)
-					{
-						// Print line number (1-based) followed by ": " and the line text
-						printf("%zu: %s\n", i + 1, line->Text);
-					}
-					else
-					{
-						printf("%s\n", line->Text);
-					}
-				}
-			}
-		}
-		
+			PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+
 		// Print closing marker
 		printf("*****\n");
 		fflush(stdout);  // Ensure output is written before returning
-		break;
-	}
-	
-	default:
-		// Should not happen for text comparisons
-		break;
 	}
 }
 
@@ -256,12 +230,10 @@ wmain(
 	FC_CONFIG Config = { 0 }; // Initialize all fields to zero
 	TEXT_DIFF_USER_DATA TextUserData = { 0 }; // User data for text diff callback
 
-	// Set defaults
+	// Set non-zero defaults
 	Config.Mode = FC_MODE_AUTO;
-	Config.Flags = 0;
 	Config.ResyncLines = 2;
 	Config.BufferLines = 100;
-	Config.UserData = NULL;
 
 	int ArgIndex = 1;
 	for (; ArgIndex < argc - 2; ++ArgIndex)

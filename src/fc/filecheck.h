@@ -226,6 +226,16 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
+	/**
+	 * @brief Conditionally frees a heap pointer. Safe to call with NULL.
+	 * @internal
+	 */
+	static inline void _FC_HeapFree(const void* p)
+	{
+		if (p)
+			HeapFree(GetProcessHeap(), 0, (LPVOID)p);
+	}
+
 	static const WCHAR* const g_ReservedDevices[] = {
 		L"CON", L"PRN", L"AUX", L"NUL",
 		L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
@@ -1201,15 +1211,15 @@ extern "C" {
 		}
 	cleanup:
 		_FC_HashMapFree(&MapB);
-		if (MatchPool) HeapFree(GetProcessHeap(), 0, MatchPool);
-		if (Ctx.Thresholds) HeapFree(GetProcessHeap(), 0, Ctx.Thresholds);
-		if (Ctx.PredecessorsA) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsA);
-		if (Ctx.PredecessorsB) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsB);
-		if (LcsA) HeapFree(GetProcessHeap(), 0, LcsA);
-		if (LcsB) HeapFree(GetProcessHeap(), 0, LcsB);
+		_FC_HeapFree(MatchPool);
+		_FC_HeapFree(Ctx.Thresholds);
+		_FC_HeapFree(Ctx.PredecessorsA);
+		_FC_HeapFree(Ctx.PredecessorsB);
+		_FC_HeapFree(LcsA);
+		_FC_HeapFree(LcsB);
 		// The filtered arrays are now owned by these pointers, so we must free them.
-		if (FilteredLcsA) HeapFree(GetProcessHeap(), 0, FilteredLcsA);
-		if (FilteredLcsB) HeapFree(GetProcessHeap(), 0, FilteredLcsB);
+		_FC_HeapFree(FilteredLcsA);
+		_FC_HeapFree(FilteredLcsB);
 		return Result;
 	}
 
@@ -1694,16 +1704,18 @@ extern "C" {
 			goto cleanup; // reject raw \\.\ or \\?\ paths
 		}
 
-		// Step 2: Convert to full NT path via native call
+		// Step 2: Allow-list accepted path types (defence-in-depth: blocks any
+		// future RTL_PATH_TYPE values that may be added to the enum)
 		if (!(PathType == RtlPathTypeUncAbsolute ||
 			PathType == RtlPathTypeDriveAbsolute ||
 			PathType == RtlPathTypeDriveRelative ||
 			PathType == RtlPathTypeRooted ||
 			PathType == RtlPathTypeRelative))
 		{
-			goto cleanup; // reject other types like UNC relative, etc.
+			goto cleanup;
 		}
 
+		// Step 3: Convert to full NT path via native call
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
@@ -1716,7 +1728,7 @@ extern "C" {
 		}
 		ntPathInitialized = TRUE;
 
-		// Step 3: Detect risky NT path prefixes
+		// Step 4: Detect risky NT path prefixes
 		if (NtPath.Length >= 8 * sizeof(WCHAR))
 		{
 			const WCHAR* s = NtPath.Buffer;
@@ -1728,7 +1740,7 @@ extern "C" {
 			}
 		}
 
-		// Step 4: Reject reserved DOS device names
+		// Step 5: Reject reserved DOS device names
 		const WCHAR* base = wcsrchr(NtPath.Buffer, L'\\');
 		if (base == NULL)
 		{
@@ -1749,7 +1761,7 @@ extern "C" {
 			}
 		}
 
-		// Step 5: Allocate and copy canonical path
+		// Step 6: Allocate and copy canonical path
 		size_t len = (NtPath.Length / sizeof(WCHAR)) + 1;
 		outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
 		if (!outPath)
@@ -1763,7 +1775,7 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Step 6: Success - set output parameter
+		// Step 7: Success - set output parameter
 		*CanonicalPathOut = outPath;
 		success = TRUE;
 
