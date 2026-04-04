@@ -362,10 +362,12 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	// with BOM: combine into one write because WriteDataFile uses CREATE_ALWAYS,
 	// so two sequential calls would overwrite the first.
 	unsigned char bomAndText[32];
-	DWORD bomLen  = (DWORD)sizeof(bom);
-	DWORD textLen = (DWORD)strlen(text);
-	memcpy(bomAndText, bom, bomLen);
-	memcpy(bomAndText + bomLen, text, textLen);
+	DWORD bomLen = (DWORD)sizeof(bom);
+	size_t cch;
+	if (FAILED(StringCchLengthA(text, STRSAFE_MAX_CCH, &cch))) Throw(L"Bad string", NULL);
+	DWORD textLen = (DWORD)cch;
+	CopyMemory(bomAndText, bom, bomLen);
+	CopyMemory(bomAndText + bomLen, text, textLen);
 	if (!WriteDataFile(tp.p1, bomAndText, bomLen + textLen)) Throw(L"write BOM+text failed", tp.p1);
 	// without BOM
 	WRITE_STR_FILE(tp.p2, text);
