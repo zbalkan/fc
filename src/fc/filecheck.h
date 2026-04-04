@@ -226,6 +226,12 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
+	/**
+	 * @brief Conditionally frees a heap pointer. Safe to call with NULL.
+	 * @internal
+	 */
+#define _FC_HeapFree(p) do { if (p) HeapFree(GetProcessHeap(), 0, (p)); } while(0)
+
 	static const WCHAR* const g_ReservedDevices[] = {
 		L"CON", L"PRN", L"AUX", L"NUL",
 		L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
@@ -1201,15 +1207,15 @@ extern "C" {
 		}
 	cleanup:
 		_FC_HashMapFree(&MapB);
-		if (MatchPool) HeapFree(GetProcessHeap(), 0, MatchPool);
-		if (Ctx.Thresholds) HeapFree(GetProcessHeap(), 0, Ctx.Thresholds);
-		if (Ctx.PredecessorsA) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsA);
-		if (Ctx.PredecessorsB) HeapFree(GetProcessHeap(), 0, Ctx.PredecessorsB);
-		if (LcsA) HeapFree(GetProcessHeap(), 0, LcsA);
-		if (LcsB) HeapFree(GetProcessHeap(), 0, LcsB);
+		_FC_HeapFree(MatchPool);
+		_FC_HeapFree(Ctx.Thresholds);
+		_FC_HeapFree(Ctx.PredecessorsA);
+		_FC_HeapFree(Ctx.PredecessorsB);
+		_FC_HeapFree(LcsA);
+		_FC_HeapFree(LcsB);
 		// The filtered arrays are now owned by these pointers, so we must free them.
-		if (FilteredLcsA) HeapFree(GetProcessHeap(), 0, FilteredLcsA);
-		if (FilteredLcsB) HeapFree(GetProcessHeap(), 0, FilteredLcsB);
+		_FC_HeapFree(FilteredLcsA);
+		_FC_HeapFree(FilteredLcsB);
 		return Result;
 	}
 
@@ -1695,15 +1701,6 @@ extern "C" {
 		}
 
 		// Step 2: Convert to full NT path via native call
-		if (!(PathType == RtlPathTypeUncAbsolute ||
-			PathType == RtlPathTypeDriveAbsolute ||
-			PathType == RtlPathTypeDriveRelative ||
-			PathType == RtlPathTypeRooted ||
-			PathType == RtlPathTypeRelative))
-		{
-			goto cleanup; // reject other types like UNC relative, etc.
-		}
-
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
