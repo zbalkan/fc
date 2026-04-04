@@ -110,6 +110,7 @@ StructuredOutputCallback(
 	_In_ const FC_DIFF_BLOCK* Block)
 {
 	DIFF_TEST_CONTEXT* testCtx = (DIFF_TEST_CONTEXT*)Context->UserData;
+	if (!testCtx) return;
 	if (testCtx->CallbackCount < 10)
 	{
 		testCtx->Blocks[testCtx->CallbackCount] = *Block;
@@ -776,7 +777,7 @@ static void Test_RelativePathTraversal(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"relative_file.txt", tp.p1);
 	WRITE_STR_FILE(tp.p1, "data");
 	// Build a path like C:\path\to\temp\FileCheckTests\..\FileCheckTests\relative_file.txt
-	StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s\\..\\%s\\relative_file.txt", baseDir, L"FileCheckTests");
+	if (FAILED(StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s\\..\\%s\\relative_file.txt", baseDir, L"FileCheckTests"))) Throw(L"StringCchPrintfW failed", NULL);
 	DIFF_TEST_CONTEXT testCtx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
@@ -791,7 +792,7 @@ static void Test_TrailingDotInPath(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"trailing_dot_file.txt", tp.p1);
 	WRITE_STR_FILE(tp.p1, "data");
 	// Create a path ending with a dot
-	StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s.", tp.p1);
+	if (FAILED(StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s.", tp.p1))) Throw(L"StringCchPrintfW failed", NULL);
 	DIFF_TEST_CONTEXT testCtx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
@@ -806,7 +807,7 @@ static void Test_AlternateDataStream(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"ads_file.txt", tp.p1);
 	WRITE_STR_FILE(tp.p1, "main stream data");
 	// Create a path with an alternate data stream
-	StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s:stream", tp.p1);
+	if (FAILED(StringCchPrintfW(tp.p2, MAX_LONG_PATH, L"%s:stream", tp.p1))) Throw(L"StringCchPrintfW failed", NULL);
 	WRITE_STR_FILE(tp.p2, "ads data");
 	DIFF_TEST_CONTEXT testCtx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
