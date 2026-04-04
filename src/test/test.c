@@ -141,7 +141,7 @@ typedef struct {
 /** Allocates all four path buffers. Aborts on allocation failure. */
 static TEST_PATHS AllocTestPaths(void)
 {
-	TEST_PATHS tp;
+	TEST_PATHS tp = { 0 };
 	tp.p1 = AllocWcharPath();
 	tp.p2 = AllocWcharPath();
 	tp.u1 = AllocCharPath();
