@@ -1700,7 +1700,18 @@ extern "C" {
 			goto cleanup; // reject raw \\.\ or \\?\ paths
 		}
 
-		// Step 2: Convert to full NT path via native call
+		// Step 2: Allow-list accepted path types (defence-in-depth: blocks any
+		// future RTL_PATH_TYPE values that may be added to the enum)
+		if (!(PathType == RtlPathTypeUncAbsolute ||
+			PathType == RtlPathTypeDriveAbsolute ||
+			PathType == RtlPathTypeDriveRelative ||
+			PathType == RtlPathTypeRooted ||
+			PathType == RtlPathTypeRelative))
+		{
+			goto cleanup;
+		}
+
+		// Step 3: Convert to full NT path via native call
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
@@ -1713,7 +1724,7 @@ extern "C" {
 		}
 		ntPathInitialized = TRUE;
 
-		// Step 3: Detect risky NT path prefixes
+		// Step 4: Detect risky NT path prefixes
 		if (NtPath.Length >= 8 * sizeof(WCHAR))
 		{
 			const WCHAR* s = NtPath.Buffer;
@@ -1725,7 +1736,7 @@ extern "C" {
 			}
 		}
 
-		// Step 4: Reject reserved DOS device names
+		// Step 5: Reject reserved DOS device names
 		const WCHAR* base = wcsrchr(NtPath.Buffer, L'\\');
 		if (base == NULL)
 		{
@@ -1746,7 +1757,7 @@ extern "C" {
 			}
 		}
 
-		// Step 5: Allocate and copy canonical path
+		// Step 6: Allocate and copy canonical path
 		size_t len = (NtPath.Length / sizeof(WCHAR)) + 1;
 		outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
 		if (!outPath)
@@ -1760,7 +1771,7 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Step 6: Success - set output parameter
+		// Step 7: Success - set output parameter
 		*CanonicalPathOut = outPath;
 		success = TRUE;
 
