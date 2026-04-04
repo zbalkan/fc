@@ -952,8 +952,10 @@ static void Test_TextAscii_CollapsedChangeBlock(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
-static void Test_Binary_FirstMismatchOnly(const WCHAR* baseDir)
+static void Test_Binary_AllMismatches(const WCHAR* baseDir)
 {
+	// Files differ at 3 byte positions (2, 3, 4).  The binary comparison must
+	// report EVERY differing byte, not stop after the first mismatch.
 	unsigned char a[] = { 1,2,3,4,5 };
 	unsigned char b[] = { 1,2,9,8,7 };
 	TEST_PATHS tp = AllocTestPaths();
@@ -966,7 +968,10 @@ static void Test_Binary_FirstMismatchOnly(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
 	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
-	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.CallbackCount == 3);
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 2); // offset of first differing byte
+	ASSERT_TRUE(ctx.Blocks[1].StartA == 3);
+	ASSERT_TRUE(ctx.Blocks[2].StartA == 4);
 	FreeTestPaths(&tp);
 }
 
@@ -1040,7 +1045,7 @@ int wmain(void)
 	Test_TextAscii_MultipleHunks(testDir);
 	Test_TextAscii_ResyncThreshold(testDir);
 	Test_TextAscii_CollapsedChangeBlock(testDir);
-	Test_Binary_FirstMismatchOnly(testDir);
+	Test_Binary_AllMismatches(testDir);
 	Test_TextAscii_LineNumberAccuracy(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
