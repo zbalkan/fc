@@ -22,7 +22,7 @@ int SUCCESS = 0;
         if (!(expr)) { \
             WriteConsoleW(h, L"Test FAILED: ", 13, &w, NULL); \
             WriteConsoleW(h, funcNameW, (DWORD)wcslen(funcNameW), &w, NULL); \
-            WriteConsoleW(h, L"\n  Assertion failed: " L#expr L"\n\n", (DWORD)(22 + wcslen(L#expr)), &w, NULL); \
+            WriteConsoleW(h, L"\n  Assertion failed: " L#expr L"\n\n", (DWORD)(23 + wcslen(L#expr)), &w, NULL); \
 			FAILURE++; \
             /*ExitProcess(1);*/ \
         } else { \
@@ -359,9 +359,14 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	TEST_PATHS tp = AllocTestPaths();
 	ConcatPath(baseDir, L"bom1.txt", tp.p1);
 	ConcatPath(baseDir, L"bom2.txt", tp.p2);
-	// with BOM
-	if (!WriteDataFile(tp.p1, bom, sizeof(bom))) Throw(L"write BOM failed", tp.p1);
-	if (!WriteDataFile(tp.p1, text, (DWORD)strlen(text))) Throw(L"write text failed", tp.p1);
+	// with BOM: combine into one write because WriteDataFile uses CREATE_ALWAYS,
+	// so two sequential calls would overwrite the first.
+	unsigned char bomAndText[32];
+	DWORD bomLen  = (DWORD)sizeof(bom);
+	DWORD textLen = (DWORD)strlen(text);
+	memcpy(bomAndText, bom, bomLen);
+	memcpy(bomAndText + bomLen, text, textLen);
+	if (!WriteDataFile(tp.p1, bomAndText, bomLen + textLen)) Throw(L"write BOM+text failed", tp.p1);
 	// without BOM
 	WRITE_STR_FILE(tp.p2, text);
 	DIFF_TEST_CONTEXT testCtx = { 0 };
