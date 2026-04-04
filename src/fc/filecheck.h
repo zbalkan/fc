@@ -230,7 +230,11 @@ extern "C" {
 	 * @brief Conditionally frees a heap pointer. Safe to call with NULL.
 	 * @internal
 	 */
-#define _FC_HeapFree(p) do { if (p) HeapFree(GetProcessHeap(), 0, (p)); } while(0)
+	static inline void _FC_HeapFree(const void* p)
+	{
+		if (p)
+			HeapFree(GetProcessHeap(), 0, (LPVOID)p);
+	}
 
 	static const WCHAR* const g_ReservedDevices[] = {
 		L"CON", L"PRN", L"AUX", L"NUL",
