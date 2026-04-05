@@ -9,7 +9,7 @@
 #include "filecheck.h"
 #include <stdlib.h>  // For wcstoul
 #include <wchar.h>   // For wcsncmp, wcslen, swprintf_s
-#include <ctype.h>   // For iswdigit, towupper
+#include <wctype.h>  // For iswdigit, towupper
 #include <strsafe.h> // For StringCchLengthW
 
 /**
@@ -903,7 +903,9 @@ wmain(
 				PrintUsage();
 				return 0;
 			}
-			// Silently accept /OFF and /OFFLINE (offline-file flags, no-op on local files).
+			// NOTE (intentional divergence): /OFF and /OFFLINE are currently accepted
+			// as compatibility switches but treated as no-ops.
+			// See README "Documented Differences from Windows fc.exe".
 			else if (_wcsicmp(Arg + 1, L"OFF") == 0 || _wcsicmp(Arg + 1, L"OFFLINE") == 0)
 			{
 				// No-op: accepted for compatibility with Windows fc.exe.
@@ -915,8 +917,18 @@ wmain(
 					return -1;
 			}
 			// Check for buffer line option (e.g., /LB100 or /lb100)
-			else if (_wcsnicmp(Arg + 1, L"LB", 2) == 0 && iswdigit(Arg[3]))
+			else if (_wcsnicmp(Arg + 1, L"LB", 2) == 0)
 			{
+				size_t ArgLen = wcslen(Arg);
+				if (ArgLen <= 3 || !iswdigit((wint_t)Arg[3]))
+				{
+					HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+					WCHAR buf[256];
+					swprintf_s(buf, 256, L"Invalid option: %s\n", Arg);
+					ConPrintW(hErr, buf);
+					return -1;
+				}
+
 				if (!ParseNumericOption(Arg + 3, &Config.BufferLines, 1, UINT_MAX))
 					return -1;
 			}
