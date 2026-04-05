@@ -1246,6 +1246,11 @@ extern "C" {
 	{
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
+		// Compute hash config once: clear FC_IGNORE_WS since text is already
+		// WS-normalized before hashing, so single preserved spaces are significant.
+		FC_CONFIG HashConfig = *Config;
+		if (HashConfig.Flags & FC_IGNORE_WS)
+			HashConfig.Flags &= ~(UINT)FC_IGNORE_WS;
 
 		while (Ptr <= End)
 		{
@@ -1275,25 +1280,102 @@ extern "C" {
 
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
-				const char tab = '\t';
-				const char* spaces = "    ";
-				if (!_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4))
+				// Expand tabs using 8-column tab stops, matching fc.exe/ReactOS behavior.
+				_FC_BUFFER expandedBuffer;
+				_FC_BufferInit(&expandedBuffer, sizeof(char));
+				int col = 0;
+				for (size_t ti = 0; ti < textBuffer.Count; ti++)
 				{
-					_FC_BufferFree(&textBuffer);
-					return FC_ERROR_MEMORY;
+					char c = *(const char*)_FC_BufferGet(&textBuffer, ti);
+					if (c == '\t')
+					{
+						int nSpaces = 8 - (col % 8);
+						for (int si = 0; si < nSpaces; si++)
+						{
+							char sp = ' ';
+							if (!_FC_BufferAppend(&expandedBuffer, &sp))
+							{
+								_FC_BufferFree(&expandedBuffer);
+								_FC_BufferFree(&textBuffer);
+								return FC_ERROR_MEMORY;
+							}
+						}
+						col += nSpaces;
+					}
+					else
+					{
+						if (!_FC_BufferAppend(&expandedBuffer, &c))
+						{
+							_FC_BufferFree(&expandedBuffer);
+							_FC_BufferFree(&textBuffer);
+							return FC_ERROR_MEMORY;
+						}
+						// ParseLines never places newlines in the text buffer;
+						// this reset is defensive in case the invariant changes.
+						if (c == '\n' || c == '\r')
+							col = 0;
+						else
+							col++;
+					}
 				}
+				_FC_BufferFree(&textBuffer);
+				textBuffer = expandedBuffer;
 			}
 
 			if (Config->Flags & FC_IGNORE_WS)
 			{
-				const char space = ' ';
-				const char tab = '\t';
-				if (!_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0) ||
-					!_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0))
+				// Compress whitespace: trim leading/trailing, collapse internal runs
+				// to a single space. Matches Windows fc.exe /W: "Compresses white space
+				// (tabs and spaces) during comparison."
+				_FC_BUFFER compressedBuffer;
+				_FC_BufferInit(&compressedBuffer, sizeof(char));
+				size_t wsStart = 0, wsEnd = textBuffer.Count;
+				// Trim leading whitespace.
+				while (wsStart < wsEnd)
 				{
-					_FC_BufferFree(&textBuffer);
-					return FC_ERROR_MEMORY;
+					char c = *(const char*)_FC_BufferGet(&textBuffer, wsStart);
+					if (c == ' ' || c == '\t') wsStart++;
+					else break;
 				}
+				// Trim trailing whitespace.
+				while (wsEnd > wsStart)
+				{
+					char c = *(const char*)_FC_BufferGet(&textBuffer, wsEnd - 1);
+					if (c == ' ' || c == '\t') wsEnd--;
+					else break;
+				}
+				// Collapse internal runs of whitespace to a single space.
+				BOOL inSpace = FALSE;
+				for (size_t ci = wsStart; ci < wsEnd; ci++)
+				{
+					char c = *(const char*)_FC_BufferGet(&textBuffer, ci);
+					if (c == ' ' || c == '\t')
+					{
+						if (!inSpace)
+						{
+							char sp = ' ';
+							if (!_FC_BufferAppend(&compressedBuffer, &sp))
+							{
+								_FC_BufferFree(&compressedBuffer);
+								_FC_BufferFree(&textBuffer);
+								return FC_ERROR_MEMORY;
+							}
+							inSpace = TRUE;
+						}
+					}
+					else
+					{
+						if (!_FC_BufferAppend(&compressedBuffer, &c))
+						{
+							_FC_BufferFree(&compressedBuffer);
+							_FC_BufferFree(&textBuffer);
+							return FC_ERROR_MEMORY;
+						}
+						inSpace = FALSE;
+					}
+				}
+				_FC_BufferFree(&textBuffer);
+				textBuffer = compressedBuffer;
 			}
 
 			size_t FinalLength = textBuffer.Count;
@@ -1314,7 +1396,7 @@ extern "C" {
 				_FC_LINE line;
 				line.Text = FinalText;
 				line.Length = FinalLength;
-				line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
+				line.Hash = _FC_HashLine(FinalText, FinalLength, &HashConfig);
 
 				if (!_FC_BufferAppend(pLineBuffer, &line))
 				{
@@ -1608,53 +1690,71 @@ extern "C" {
 			goto cleanup;
 		}
 
+		// Both empty: identical.
+		if (File1Size.QuadPart == 0 && File2Size.QuadPart == 0)
+		{
+			Result = FC_OK;
+			goto cleanup;
+		}
+
+		// Compare the common prefix of both files byte-by-byte first, matching
+		// ReactOS fc.exe behavior: byte mismatches are always reported, and a
+		// size-difference notification follows afterwards (not instead of).
+		LONGLONG MinSize = File1Size.QuadPart < File2Size.QuadPart
+			? File1Size.QuadPart : File2Size.QuadPart;
+		// Guard against truncation on 32-bit builds where SIZE_MAX < INT64_MAX.
+		if ((ULONGLONG)MinSize > (ULONGLONG)SIZE_MAX)
+		{
+			Result = FC_ERROR_IO;
+			goto cleanup;
+		}
+		size_t CompareSize = (size_t)MinSize;
+
+		Result = FC_OK;
+		if (CompareSize > 0)
+		{
+			Map1Handle = CreateFileMappingW(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+			Map2Handle = CreateFileMappingW(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+
+			if (Map1Handle == NULL || Map2Handle == NULL)
+			{
+				Result = FC_ERROR_IO;
+				goto cleanup;
+			}
+
+			Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
+			Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
+
+			if (Buffer1 == NULL || Buffer2 == NULL)
+			{
+				Result = FC_ERROR_IO;
+				goto cleanup;
+			}
+
+			for (size_t i = 0; i < CompareSize; ++i)
+			{
+				if (Buffer1[i] != Buffer2[i])
+				{
+					if (Result == FC_OK) Result = FC_DIFFERENT;
+					if (Config->DiffCallback != NULL)
+					{
+						FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
+						FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+						Config->DiffCallback(&BinContext, &block);
+					}
+				}
+			}
+		}
+
+		// Report size difference after byte comparison (if applicable).
 		if (File1Size.QuadPart != File2Size.QuadPart)
 		{
+			Result = FC_DIFFERENT;
 			if (Config->DiffCallback != NULL)
 			{
 				FC_DIFF_BLOCK block = { FC_DIFF_TYPE_SIZE, (size_t)File1Size.QuadPart, (size_t)File1Size.QuadPart, (size_t)File2Size.QuadPart, (size_t)File2Size.QuadPart };
 				FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
 				Config->DiffCallback(&BinContext, &block);
-			}
-			Result = FC_DIFFERENT;
-			goto cleanup;
-		}
-
-		if (File1Size.QuadPart == 0)
-		{
-			Result = FC_OK; // Empty files are identical
-			goto cleanup;
-		}
-
-		size_t CompareSize = (size_t)File1Size.QuadPart;
-		Map1Handle = CreateFileMappingW(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
-		Map2Handle = CreateFileMappingW(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
-
-		if (Map1Handle == NULL || Map2Handle == NULL)
-		{
-			goto cleanup;
-		}
-
-		Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
-		Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
-
-		if (Buffer1 == NULL || Buffer2 == NULL)
-		{
-			goto cleanup;
-		}
-
-		Result = FC_OK;
-		for (size_t i = 0; i < CompareSize; ++i)
-		{
-			if (Buffer1[i] != Buffer2[i])
-			{
-				if (Result == FC_OK) Result = FC_DIFFERENT;
-				if (Config->DiffCallback != NULL)
-				{
-					FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
-					FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
-					Config->DiffCallback(&BinContext, &block);
-				}
 			}
 		}
 

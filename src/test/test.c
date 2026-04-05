@@ -270,13 +270,52 @@ static void Test_WhitespaceWithInsensitive(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_WhitespaceCompress(const WCHAR* baseDir)
+{
+	// /W compresses whitespace, not strips it: "A  B  C" and "A B C" should
+	// match because both compress to "A B C".
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"wsc1.txt", tp.p1);
+	ConcatPath(baseDir, L"wsc2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "A  B  C\n");
+	WRITE_STR_FILE(tp.p2, "A B C\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, FC_IGNORE_WS, &testCtx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	// Both compress to "A B C" -> identical
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	FreeTestPaths(&tp);
+}
+
+static void Test_WhitespaceCompressDistinct(const WCHAR* baseDir)
+{
+	// /W compresses, not strips: "AB" (no space) vs "A B" (one space) must
+	// remain DIFFERENT under /W because a single space is preserved after compression.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"wscd1.txt", tp.p1);
+	ConcatPath(baseDir, L"wscd2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "AB\n");
+	WRITE_STR_FILE(tp.p2, "A B\n");
+	DIFF_TEST_CONTEXT testCtx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, FC_IGNORE_WS, &testCtx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	// "AB" != "A B" even after compression
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	FreeTestPaths(&tp);
+}
+
 static void Test_TabsWithExpanded(const WCHAR* baseDir)
 {
 	TEST_PATHS tp = AllocTestPaths();
 	ConcatPath(baseDir, L"tab1.txt", tp.p1);
 	ConcatPath(baseDir, L"tab2.txt", tp.p2);
 	WRITE_STR_FILE(tp.p1, "A\tB\n");
-	WRITE_STR_FILE(tp.p2, "A    B\n"); // 4 spaces
+	// "A" occupies column 0; the tab character (at position 1) advances to the
+	// next 8-column tab stop (column 8), inserting 7 spaces (8-1=7).
+	// Matches fc.exe/ReactOS TAB_WIDTH 8 behavior.
+	WRITE_STR_FILE(tp.p2, "A       B\n"); // 7 spaces (8-column tab stop)
 	DIFF_TEST_CONTEXT testCtx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
@@ -1006,6 +1045,8 @@ int wmain(void)
 	Test_CaseSensitivityWithInsensitive(testDir);
 	Test_WhitespaceWithSensitive(testDir);
 	Test_WhitespaceWithInsensitive(testDir);
+	Test_WhitespaceCompress(testDir);
+	Test_WhitespaceCompressDistinct(testDir);
 	Test_TabsWithExpanded(testDir);
 	Test_TabsWithRaw(testDir);
 	Test_UnicodeUtf8Match(testDir);
