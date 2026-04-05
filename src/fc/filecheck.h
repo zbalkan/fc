@@ -1023,7 +1023,7 @@ extern "C" {
 			{
 				*pFilteredLcsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
 				*pFilteredLcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
-				if (!*pFilteredLcsA || !*pFilteredLcsB) return 0; // Allocation failed
+				if (!*pFilteredLcsA || !*pFilteredLcsB) return SIZE_MAX; // Allocation failed
 				memcpy(*pFilteredLcsA, LcsA, LcsLength * sizeof(size_t));
 				memcpy(*pFilteredLcsB, LcsB, LcsLength * sizeof(size_t));
 			}
