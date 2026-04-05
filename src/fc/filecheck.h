@@ -42,7 +42,7 @@ extern "C" {
 		FC_MODE_TEXT_ASCII,     // Plain text, ASCII/ANSI encoding
 		FC_MODE_TEXT_UNICODE,   // Unicode text (UTF-8, UTF-16 w/ BOM)
 		FC_MODE_BINARY,         // Raw binary comparison
-		FC_MODE_AUTO            // Auto-detect based on file content
+		FC_MODE_AUTO            // Auto-detect based on file content (see _FC_IsProbablyTextBuffer)
 	} FC_MODE;
 
 	/**
@@ -1555,8 +1555,21 @@ extern "C" {
 	/**
 	 * @brief Analyzes a byte buffer to determine if it likely contains text.
 	 *
-	 * This heuristic checks for UTF BOMs and calculates the ratio of printable ASCII
-	 * characters to total characters. A null byte is considered a strong indicator of binary content.
+	 * This heuristic is used by @c FC_MODE_AUTO to decide whether to apply text or
+	 * binary comparison. This is an intentional design difference from the Windows
+	 * @c fc.exe tool, which defaults unconditionally to text mode (@c /L) when no
+	 * explicit mode flag is given. Here, the content is inspected instead, which
+	 * prevents misleading line-diff output for binary files that happen to carry a
+	 * @c .txt extension.
+	 *
+	 * The heuristic rules, applied in order:
+	 * -# If the buffer begins with a UTF-8, UTF-16 LE, or UTF-16 BE BOM, it is text.
+	 * -# If any byte is @c 0x00 (null), it is binary (strong binary indicator).
+	 * -# If at least 90 % of bytes are printable ASCII (0x20–0x7E, TAB, CR, LF),
+	 *    it is text; otherwise binary.
+	 *
+	 * The caller reads only the first 4 KB of each file (@c _FC_IsProbablyTextFileW).
+	 * If either file is classified as binary the pair is compared in binary mode.
 	 * @internal
 	 * @param Buffer A pointer to the byte buffer to inspect.
 	 * @param BufferLength The length of the buffer in bytes.

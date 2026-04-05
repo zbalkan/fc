@@ -303,13 +303,16 @@ PrintUsage(void)
 	ConPrintW(hOut, L"  /B    Binary comparison\n");
 	ConPrintW(hOut, L"  /C    Case-insensitive comparison\n");
 	ConPrintW(hOut, L"  /W    Ignore whitespace differences\n");
-	ConPrintW(hOut, L"  /L    ASCII text comparison (default)\n");
+	ConPrintW(hOut, L"  /L    ASCII text comparison\n");
 	ConPrintW(hOut, L"  /N    Show line numbers in text mode\n");
 	ConPrintW(hOut, L"  /T    Do not expand tabs\n");
 	ConPrintW(hOut, L"  /U    Unicode text comparison\n");
 	ConPrintW(hOut, L"  /nnnn Set resync line threshold (default 2)\n");
 	ConPrintW(hOut, L"  /LBn  Set internal buffer size for text lines (default 100)\n");
-	ConPrintW(hOut, L"(If neither L, B or U is specified, auto-detect is used)\n");
+	ConPrintW(hOut, L"(If neither /L, /B nor /U is specified, the mode is auto-detected from\n");
+	ConPrintW(hOut, L" file content in this order: a UTF BOM means text; otherwise a null byte\n");
+	ConPrintW(hOut, L" means binary; otherwise >=90%% printable ASCII means text. This differs\n");
+	ConPrintW(hOut, L" from fc.exe, which defaults to /L.)\n");
 }
 
 _Success_(return == TRUE)
