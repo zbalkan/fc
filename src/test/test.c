@@ -18,11 +18,26 @@ int SUCCESS = 0;
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); \
         DWORD w; \
         WCHAR funcNameW[128]; \
-        MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128); \
+        WCHAR fileW[256]; \
+        WCHAR _lineW[16]; \
+        WCHAR _exprW[512]; \
+        if (!MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128)) \
+            StringCchCopyW(funcNameW, 128, L"<unknown>"); \
+        if (!MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256)) \
+            StringCchCopyW(fileW, 256, L"<unknown>"); \
+        if (!MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512)) \
+            StringCchCopyW(_exprW, 512, L"<expression>"); \
         if (!(expr)) { \
+            swprintf_s(_lineW, 16, L"%d", __LINE__); \
             WriteConsoleW(h, L"Test FAILED: ", 13, &w, NULL); \
             WriteConsoleW(h, funcNameW, (DWORD)wcslen(funcNameW), &w, NULL); \
-            WriteConsoleW(h, L"\n  Assertion failed: " L#expr L"\n\n", (DWORD)(23 + wcslen(L#expr)), &w, NULL); \
+            WriteConsoleW(h, L"\n  Assertion failed: ", 21, &w, NULL); \
+            WriteConsoleW(h, _exprW, (DWORD)wcslen(_exprW), &w, NULL); \
+            WriteConsoleW(h, L"\n  File: ", 9, &w, NULL); \
+            WriteConsoleW(h, fileW, (DWORD)wcslen(fileW), &w, NULL); \
+            WriteConsoleW(h, L", Line: ", 8, &w, NULL); \
+            WriteConsoleW(h, _lineW, (DWORD)wcslen(_lineW), &w, NULL); \
+            WriteConsoleW(h, L"\n\n", 2, &w, NULL); \
 			FAILURE++; \
             /*ExitProcess(1);*/ \
         } else { \
@@ -54,7 +69,7 @@ inline static WCHAR* AllocWcharPath()
 }
 inline static char* AllocCharPath()
 {
-	char* ret = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(char));
+	char* ret = (char*)HeapAlloc(GetProcessHeap(), 0, UTF8_BUFFER_SIZE * sizeof(char));
 	if (!ret) {
 		Throw(L"Test setup failed: HeapAlloc", NULL);
 	}
@@ -413,6 +428,32 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	WRITE_STR_FILE(tp.p2, text);
 	DIFF_TEST_CONTEXT testCtx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_UNICODE, 0, &testCtx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	FreeTestPaths(&tp);
+}
+
+static void Test_AutoModeBomEquivalence(const WCHAR* baseDir)
+{
+	// Verify that FC_MODE_AUTO also strips the UTF-8 BOM before comparing lines,
+	// so a file with a BOM compares equal to the same content without a BOM.
+	const unsigned char bom[] = { 0xEF,0xBB,0xBF };
+	const char* text = "Hello\n";
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"auto_bom1.txt", tp.p1);
+	ConcatPath(baseDir, L"auto_bom2.txt", tp.p2);
+	unsigned char bomAndText[32];
+	DWORD bomLen = (DWORD)sizeof(bom);
+	size_t cch;
+	if (FAILED(StringCchLengthA(text, STRSAFE_MAX_CCH, &cch))) Throw(L"Bad string", NULL);
+	DWORD textLen = (DWORD)cch;
+	CopyMemory(bomAndText, bom, bomLen);
+	CopyMemory(bomAndText + bomLen, text, textLen);
+	if (!WriteDataFile(tp.p1, bomAndText, bomLen + textLen)) Throw(L"write BOM+text failed", tp.p1);
+	WRITE_STR_FILE(tp.p2, text);
+	DIFF_TEST_CONTEXT testCtx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
 	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
@@ -1071,6 +1112,7 @@ int wmain(void)
 	Test_UnicodeDiacritics(testDir);
 	Test_UnicodeEmojiMultiline(testDir);
 	Test_UnicodeBomEquivalence(testDir);
+	Test_AutoModeBomEquivalence(testDir);
 	Test_BinaryExactMatch(testDir);
 	Test_BinaryMiddleDiff(testDir);
 	Test_BinarySizeDiff(testDir);
