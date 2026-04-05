@@ -691,6 +691,13 @@ wmain(
 	_In_ int argc,
 	_In_reads_(argc) WCHAR * argv[])
 {
+	// Special-case: fc /? or fc -? with no file arguments — print usage and exit 0.
+	if (argc == 2 && (argv[1][0] == L'/' || argv[1][0] == L'-') && argv[1][1] == L'?')
+	{
+		PrintUsage();
+		return 0;
+	}
+
 	if (argc < 3)
 	{
 		PrintUsage();
