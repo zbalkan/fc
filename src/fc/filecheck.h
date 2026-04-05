@@ -1179,7 +1179,7 @@ extern "C" {
 						_FC_LCS_LINK newNode;
 						newNode.AIdx = i;
 						newNode.BIdx = match->IndexInB;
-						newNode.PrevLink = (k > 1) ? Ctx.Links[k - 1] : SIZE_MAX;
+						newNode.PrevLink = (k > 0) ? Ctx.Links[k - 1] : SIZE_MAX;
 						if (!_FC_BufferAppend(&Ctx.LinkPool, &newNode))
 						{
 							Result = FC_ERROR_MEMORY;
