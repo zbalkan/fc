@@ -54,6 +54,7 @@ extern "C" {
 #define FC_IGNORE_WS        0x0002  // Ignore whitespace in text comparison.
 #define FC_SHOW_LINE_NUMS   0x0004  // Show line numbers in output.
 #define FC_RAW_TABS         0x0008  // Do not expand tabs in text comparison.
+#define FC_ABBREVIATED      0x0010  // Abbreviated output: show only first and last line of each diff block.
 	 /** @} */
 
 	/**
