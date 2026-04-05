@@ -1276,6 +1276,8 @@ extern "C" {
 			(unsigned char)Ptr[2] == 0xBF)
 		{
 			Ptr += 3;
+			if (Ptr == End)
+				return FC_OK;
 		}
 
 		// Compute hash config once: clear FC_IGNORE_WS since text is already
