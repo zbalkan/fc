@@ -53,7 +53,7 @@ PrintLines(
 		if (line != NULL && line->Text != NULL)
 		{
 			if (ShowLineNumbers)
-				printf("%zu: %s\n", i + 1, line->Text);
+				printf("%5zu:  %s\n", i + 1, line->Text);
 			else
 				printf("%s\n", line->Text);
 		}

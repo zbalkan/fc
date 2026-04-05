@@ -273,14 +273,29 @@ extern "C" {
 	} _FC_MATCH;
 
 	/**
+	 * @struct _FC_LCS_LINK
+	 * @brief A single node in the LCS backtracking chain.
+	 *
+	 * Each time the Thresholds array is updated at level k, one link node is
+	 * appended to the pool.  Links[k] holds the pool index of the most recent
+	 * such node; PrevLink chains back to the length-(k-1) predecessor.
+	 * @internal
+	 */
+	typedef struct {
+		size_t AIdx;      /**< Line index in file A. */
+		size_t BIdx;      /**< Line index in file B. */
+		size_t PrevLink;  /**< Pool index of the predecessor link, or SIZE_MAX if none. */
+	} _FC_LCS_LINK;
+
+	/**
 	 * @struct _FC_LCS_CONTEXT
 	 * @brief Holds the intermediate data structures for the Hunt-McIlroy LCS algorithm.
 	 * @internal
 	 */
 	typedef struct {
-		size_t* Thresholds;     /**< Stores the smallest ending line index in B for an LCS of a given length. */
-		size_t* PredecessorsA;  /**< For each line in A, stores the previous line's index in B from the LCS path. */
-		size_t* PredecessorsB;  /**< For each line in A, stores its own line index in B if it's part of a potential LCS path. */
+		size_t* Thresholds;  /**< THRESH[k]: smallest B-end index for an LCS of length k. */
+		size_t* Links;       /**< Links[k]: pool index of the best length-k chain; SIZE_MAX = none. */
+		_FC_BUFFER LinkPool; /**< Pool of _FC_LCS_LINK nodes, grown on each Threshold update. */
 	} _FC_LCS_CONTEXT;
 
 	/**
@@ -1133,13 +1148,19 @@ extern "C" {
 		}
 
 		Ctx.Thresholds = (size_t*)HeapAlloc(GetProcessHeap(), 0, (pBufferA->Count + 1) * sizeof(size_t));
-		Ctx.PredecessorsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
-		Ctx.PredecessorsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
-		if (!Ctx.Thresholds || !Ctx.PredecessorsA || !Ctx.PredecessorsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
+		Ctx.Links = (size_t*)HeapAlloc(GetProcessHeap(), 0, (pBufferA->Count + 1) * sizeof(size_t));
+		if (!Ctx.Thresholds || !Ctx.Links) { Result = FC_ERROR_MEMORY; goto cleanup; }
+
+		_FC_BufferInit(&Ctx.LinkPool, sizeof(_FC_LCS_LINK));
 
 		size_t LcsLength = 0;
 		Ctx.Thresholds[0] = (size_t)-1;
-		for (size_t i = 1; i <= pBufferA->Count; ++i) Ctx.Thresholds[i] = SIZE_MAX;
+		Ctx.Links[0] = SIZE_MAX;
+		for (size_t i = 1; i <= pBufferA->Count; ++i)
+		{
+			Ctx.Thresholds[i] = SIZE_MAX;
+			Ctx.Links[i] = SIZE_MAX;
+		}
 
 		for (size_t i = 0; i < pBufferA->Count; ++i) {
 			UINT hashA = ((_FC_LINE*)_FC_BufferGet(pBufferA, i))->Hash;
@@ -1155,9 +1176,17 @@ extern "C" {
 					k = low;
 
 					if (match->IndexInB < Ctx.Thresholds[k]) {
+						_FC_LCS_LINK newNode;
+						newNode.AIdx = i;
+						newNode.BIdx = match->IndexInB;
+						newNode.PrevLink = (k > 0) ? Ctx.Links[k - 1] : SIZE_MAX;
+						if (!_FC_BufferAppend(&Ctx.LinkPool, &newNode))
+						{
+							Result = FC_ERROR_MEMORY;
+							goto cleanup;
+						}
 						Ctx.Thresholds[k] = match->IndexInB;
-						Ctx.PredecessorsA[i] = (k > 1) ? Ctx.Thresholds[k - 1] : (size_t)-1;
-						Ctx.PredecessorsB[i] = match->IndexInB;
+						Ctx.Links[k] = Ctx.LinkPool.Count - 1;
 						if (k > LcsLength) LcsLength = k;
 					}
 				}
@@ -1169,28 +1198,12 @@ extern "C" {
 			LcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
 			if (!LcsA || !LcsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
 
-			size_t currentB = Ctx.Thresholds[LcsLength];
-			size_t currentA = 0;
-			for (size_t i = pBufferA->Count - 1; i != (size_t)-1; --i) {
-				if (Ctx.PredecessorsB[i] == currentB) {
-					currentA = i;
-					break;
-				}
-			}
-
-			for (size_t i = LcsLength; i > 0; --i) {
-				LcsA[i - 1] = currentA;
-				LcsB[i - 1] = currentB;
-				size_t prevB = Ctx.PredecessorsA[currentA];
-				currentB = prevB;
-				if (currentB == (size_t)-1) break;
-
-				for (size_t j = currentA - 1; j != (size_t)-1; --j) {
-					if (Ctx.PredecessorsB[j] == currentB) {
-						currentA = j;
-						break;
-					}
-				}
+			size_t curLink = Ctx.Links[LcsLength];
+			for (size_t i = LcsLength; i > 0 && curLink != SIZE_MAX; --i) {
+				_FC_LCS_LINK* node = (_FC_LCS_LINK*)_FC_BufferGet(&Ctx.LinkPool, curLink);
+				LcsA[i - 1] = node->AIdx;
+				LcsB[i - 1] = node->BIdx;
+				curLink = node->PrevLink;
 			}
 		}
 
@@ -1213,8 +1226,8 @@ extern "C" {
 		_FC_HashMapFree(&MapB);
 		_FC_HeapFree(MatchPool);
 		_FC_HeapFree(Ctx.Thresholds);
-		_FC_HeapFree(Ctx.PredecessorsA);
-		_FC_HeapFree(Ctx.PredecessorsB);
+		_FC_HeapFree(Ctx.Links);
+		_FC_BufferFree(&Ctx.LinkPool);
 		_FC_HeapFree(LcsA);
 		_FC_HeapFree(LcsB);
 		// The filtered arrays are now owned by these pointers, so we must free them.
@@ -1246,6 +1259,11 @@ extern "C" {
 	{
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
+		// Compute hash config once: clear FC_IGNORE_WS since text is already
+		// WS-normalized before hashing, so single preserved spaces are significant.
+		FC_CONFIG HashConfig = *Config;
+		if (HashConfig.Flags & FC_IGNORE_WS)
+			HashConfig.Flags &= ~(UINT)FC_IGNORE_WS;
 
 		while (Ptr <= End)
 		{
@@ -1275,25 +1293,102 @@ extern "C" {
 
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
-				const char tab = '\t';
-				const char* spaces = "    ";
-				if (!_FC_BufferReplace(&textBuffer, &tab, 1, spaces, 4))
+				// Expand tabs using 8-column tab stops, matching fc.exe/ReactOS behavior.
+				_FC_BUFFER expandedBuffer;
+				_FC_BufferInit(&expandedBuffer, sizeof(char));
+				int col = 0;
+				for (size_t ti = 0; ti < textBuffer.Count; ti++)
 				{
-					_FC_BufferFree(&textBuffer);
-					return FC_ERROR_MEMORY;
+					char c = *(const char*)_FC_BufferGet(&textBuffer, ti);
+					if (c == '\t')
+					{
+						int nSpaces = 8 - (col % 8);
+						for (int si = 0; si < nSpaces; si++)
+						{
+							char sp = ' ';
+							if (!_FC_BufferAppend(&expandedBuffer, &sp))
+							{
+								_FC_BufferFree(&expandedBuffer);
+								_FC_BufferFree(&textBuffer);
+								return FC_ERROR_MEMORY;
+							}
+						}
+						col += nSpaces;
+					}
+					else
+					{
+						if (!_FC_BufferAppend(&expandedBuffer, &c))
+						{
+							_FC_BufferFree(&expandedBuffer);
+							_FC_BufferFree(&textBuffer);
+							return FC_ERROR_MEMORY;
+						}
+						// ParseLines never places newlines in the text buffer;
+						// this reset is defensive in case the invariant changes.
+						if (c == '\n' || c == '\r')
+							col = 0;
+						else
+							col++;
+					}
 				}
+				_FC_BufferFree(&textBuffer);
+				textBuffer = expandedBuffer;
 			}
 
 			if (Config->Flags & FC_IGNORE_WS)
 			{
-				const char space = ' ';
-				const char tab = '\t';
-				if (!_FC_BufferReplace(&textBuffer, &space, 1, NULL, 0) ||
-					!_FC_BufferReplace(&textBuffer, &tab, 1, NULL, 0))
+				// Compress whitespace: trim leading/trailing, collapse internal runs
+				// to a single space. Matches Windows fc.exe /W: "Compresses white space
+				// (tabs and spaces) during comparison."
+				_FC_BUFFER compressedBuffer;
+				_FC_BufferInit(&compressedBuffer, sizeof(char));
+				size_t wsStart = 0, wsEnd = textBuffer.Count;
+				// Trim leading whitespace.
+				while (wsStart < wsEnd)
 				{
-					_FC_BufferFree(&textBuffer);
-					return FC_ERROR_MEMORY;
+					char c = *(const char*)_FC_BufferGet(&textBuffer, wsStart);
+					if (c == ' ' || c == '\t') wsStart++;
+					else break;
 				}
+				// Trim trailing whitespace.
+				while (wsEnd > wsStart)
+				{
+					char c = *(const char*)_FC_BufferGet(&textBuffer, wsEnd - 1);
+					if (c == ' ' || c == '\t') wsEnd--;
+					else break;
+				}
+				// Collapse internal runs of whitespace to a single space.
+				BOOL inSpace = FALSE;
+				for (size_t ci = wsStart; ci < wsEnd; ci++)
+				{
+					char c = *(const char*)_FC_BufferGet(&textBuffer, ci);
+					if (c == ' ' || c == '\t')
+					{
+						if (!inSpace)
+						{
+							char sp = ' ';
+							if (!_FC_BufferAppend(&compressedBuffer, &sp))
+							{
+								_FC_BufferFree(&compressedBuffer);
+								_FC_BufferFree(&textBuffer);
+								return FC_ERROR_MEMORY;
+							}
+							inSpace = TRUE;
+						}
+					}
+					else
+					{
+						if (!_FC_BufferAppend(&compressedBuffer, &c))
+						{
+							_FC_BufferFree(&compressedBuffer);
+							_FC_BufferFree(&textBuffer);
+							return FC_ERROR_MEMORY;
+						}
+						inSpace = FALSE;
+					}
+				}
+				_FC_BufferFree(&textBuffer);
+				textBuffer = compressedBuffer;
 			}
 
 			size_t FinalLength = textBuffer.Count;
@@ -1314,7 +1409,7 @@ extern "C" {
 				_FC_LINE line;
 				line.Text = FinalText;
 				line.Length = FinalLength;
-				line.Hash = _FC_HashLine(FinalText, FinalLength, Config);
+				line.Hash = _FC_HashLine(FinalText, FinalLength, &HashConfig);
 
 				if (!_FC_BufferAppend(pLineBuffer, &line))
 				{
@@ -1608,53 +1703,71 @@ extern "C" {
 			goto cleanup;
 		}
 
+		// Both empty: identical.
+		if (File1Size.QuadPart == 0 && File2Size.QuadPart == 0)
+		{
+			Result = FC_OK;
+			goto cleanup;
+		}
+
+		// Compare the common prefix of both files byte-by-byte first, matching
+		// ReactOS fc.exe behavior: byte mismatches are always reported, and a
+		// size-difference notification follows afterwards (not instead of).
+		LONGLONG MinSize = File1Size.QuadPart < File2Size.QuadPart
+			? File1Size.QuadPart : File2Size.QuadPart;
+		// Guard against truncation on 32-bit builds where SIZE_MAX < INT64_MAX.
+		if ((ULONGLONG)MinSize > (ULONGLONG)SIZE_MAX)
+		{
+			Result = FC_ERROR_IO;
+			goto cleanup;
+		}
+		size_t CompareSize = (size_t)MinSize;
+
+		Result = FC_OK;
+		if (CompareSize > 0)
+		{
+			Map1Handle = CreateFileMappingW(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+			Map2Handle = CreateFileMappingW(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
+
+			if (Map1Handle == NULL || Map2Handle == NULL)
+			{
+				Result = FC_ERROR_IO;
+				goto cleanup;
+			}
+
+			Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
+			Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
+
+			if (Buffer1 == NULL || Buffer2 == NULL)
+			{
+				Result = FC_ERROR_IO;
+				goto cleanup;
+			}
+
+			for (size_t i = 0; i < CompareSize; ++i)
+			{
+				if (Buffer1[i] != Buffer2[i])
+				{
+					if (Result == FC_OK) Result = FC_DIFFERENT;
+					if (Config->DiffCallback != NULL)
+					{
+						FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
+						FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+						Config->DiffCallback(&BinContext, &block);
+					}
+				}
+			}
+		}
+
+		// Report size difference after byte comparison (if applicable).
 		if (File1Size.QuadPart != File2Size.QuadPart)
 		{
+			Result = FC_DIFFERENT;
 			if (Config->DiffCallback != NULL)
 			{
 				FC_DIFF_BLOCK block = { FC_DIFF_TYPE_SIZE, (size_t)File1Size.QuadPart, (size_t)File1Size.QuadPart, (size_t)File2Size.QuadPart, (size_t)File2Size.QuadPart };
 				FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
 				Config->DiffCallback(&BinContext, &block);
-			}
-			Result = FC_DIFFERENT;
-			goto cleanup;
-		}
-
-		if (File1Size.QuadPart == 0)
-		{
-			Result = FC_OK; // Empty files are identical
-			goto cleanup;
-		}
-
-		size_t CompareSize = (size_t)File1Size.QuadPart;
-		Map1Handle = CreateFileMappingW(File1Handle, NULL, PAGE_READONLY, 0, 0, NULL);
-		Map2Handle = CreateFileMappingW(File2Handle, NULL, PAGE_READONLY, 0, 0, NULL);
-
-		if (Map1Handle == NULL || Map2Handle == NULL)
-		{
-			goto cleanup;
-		}
-
-		Buffer1 = (unsigned char*)MapViewOfFile(Map1Handle, FILE_MAP_READ, 0, 0, CompareSize);
-		Buffer2 = (unsigned char*)MapViewOfFile(Map2Handle, FILE_MAP_READ, 0, 0, CompareSize);
-
-		if (Buffer1 == NULL || Buffer2 == NULL)
-		{
-			goto cleanup;
-		}
-
-		Result = FC_OK;
-		for (size_t i = 0; i < CompareSize; ++i)
-		{
-			if (Buffer1[i] != Buffer2[i])
-			{
-				if (Result == FC_OK) Result = FC_DIFFERENT;
-				if (Config->DiffCallback != NULL)
-				{
-					FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, i, Buffer1[i], i, Buffer2[i] };
-					FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
-					Config->DiffCallback(&BinContext, &block);
-				}
 			}
 		}
 
