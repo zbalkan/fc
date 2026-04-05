@@ -40,7 +40,23 @@ ConPrintW(_In_ HANDLE hOut, _In_z_ const WCHAR* msg)
 			if (buf != NULL)
 			{
 				WideCharToMultiByte(CP_UTF8, 0, msg, -1, buf, cbNeeded, NULL, NULL);
-				WriteFile(hOut, buf, (DWORD)(cbNeeded - 1), NULL, NULL);
+
+				{
+					DWORD totalBytes = (DWORD)(cbNeeded - 1);
+					DWORD offset = 0;
+
+					while (offset < totalBytes)
+					{
+						DWORD bytesWritten = 0;
+						if (!WriteFile(hOut, buf + offset, totalBytes - offset, &bytesWritten, NULL) ||
+							bytesWritten == 0)
+						{
+							break;
+						}
+
+						offset += bytesWritten;
+					}
+				}
 				HeapFree(GetProcessHeap(), 0, buf);
 			}
 		}
