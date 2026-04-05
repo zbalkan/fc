@@ -21,9 +21,12 @@ int SUCCESS = 0;
         WCHAR fileW[256]; \
         WCHAR _lineW[16]; \
         WCHAR _exprW[512]; \
-        MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128); \
-        MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256); \
-        MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512); \
+        if (!MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128)) \
+            StringCchCopyW(funcNameW, 128, L"<unknown>"); \
+        if (!MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256)) \
+            StringCchCopyW(fileW, 256, L"<unknown>"); \
+        if (!MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512)) \
+            StringCchCopyW(_exprW, 512, L"<expression>"); \
         if (!(expr)) { \
             swprintf_s(_lineW, 16, L"%d", __LINE__); \
             WriteConsoleW(h, L"Test FAILED: ", 13, &w, NULL); \
