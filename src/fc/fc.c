@@ -672,11 +672,46 @@ WildcardFileCompare(
 			return 2;
 		}
 
+		// Precompute stems for Exp2 once to avoid O(n²) heap allocations.
+		WCHAR** Stems2 = (WCHAR**)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+			Exp2->Count * sizeof(WCHAR*));
+		if (Stems2 == NULL)
+		{
+			HeapFree(GetProcessHeap(), 0, Used2);
+			FreeWildcardExpansion(Exp1);
+			FreeWildcardExpansion(Exp2);
+			ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+				L"Error: memory allocation failure during wildcard pairing.\n");
+			return 2;
+		}
+		for (size_t k = 0; k < Exp2->Count; k++)
+		{
+			Stems2[k] = GetFileStem(Exp2->Paths[k]);
+			if (Stems2[k] == NULL)
+			{
+				ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+					L"Error: memory allocation failure extracting file stem.\n");
+				// Free stems allocated so far.
+				for (size_t m = 0; m < k; m++)
+					HeapFree(GetProcessHeap(), 0, Stems2[m]);
+				HeapFree(GetProcessHeap(), 0, Stems2);
+				HeapFree(GetProcessHeap(), 0, Used2);
+				FreeWildcardExpansion(Exp1);
+				FreeWildcardExpansion(Exp2);
+				return 2;
+			}
+		}
+
 		for (size_t i = 0; i < Exp1->Count; i++)
 		{
 			WCHAR* Stem1 = GetFileStem(Exp1->Paths[i]);
 			if (Stem1 == NULL)
 			{
+				ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+					L"Error: memory allocation failure extracting file stem.\n");
+				for (size_t m = 0; m < Exp2->Count; m++)
+					HeapFree(GetProcessHeap(), 0, Stems2[m]);
+				HeapFree(GetProcessHeap(), 0, Stems2);
 				HeapFree(GetProcessHeap(), 0, Used2);
 				FreeWildcardExpansion(Exp1);
 				FreeWildcardExpansion(Exp2);
@@ -689,18 +724,7 @@ WildcardFileCompare(
 			{
 				if (Used2[j])
 					continue;
-				WCHAR* Stem2 = GetFileStem(Exp2->Paths[j]);
-				if (Stem2 == NULL)
-				{
-					HeapFree(GetProcessHeap(), 0, Stem1);
-					HeapFree(GetProcessHeap(), 0, Used2);
-					FreeWildcardExpansion(Exp1);
-					FreeWildcardExpansion(Exp2);
-					return 2;
-				}
-				BOOL StemsMatch = (_wcsicmp(Stem1, Stem2) == 0);
-				HeapFree(GetProcessHeap(), 0, Stem2);
-				if (StemsMatch)
+				if (_wcsicmp(Stem1, Stems2[j]) == 0)
 				{
 					MatchIndex = j;
 					break;
@@ -757,6 +781,9 @@ WildcardFileCompare(
 			}
 		}
 
+		for (size_t m = 0; m < Exp2->Count; m++)
+			HeapFree(GetProcessHeap(), 0, Stems2[m]);
+		HeapFree(GetProcessHeap(), 0, Stems2);
 		HeapFree(GetProcessHeap(), 0, Used2);
 	}
 	else
@@ -887,8 +914,8 @@ wmain(
 				if (!ParseNumericOption(Arg + 1, &Config.ResyncLines, 1, UINT_MAX))
 					return -1;
 			}
-			// Check for buffer line option (e.g., /LB100)
-			else if (wcsncmp(Arg + 1, L"LB", 2) == 0 && iswdigit(Arg[3]))
+			// Check for buffer line option (e.g., /LB100 or /lb100)
+			else if (_wcsnicmp(Arg + 1, L"LB", 2) == 0 && iswdigit(Arg[3]))
 			{
 				if (!ParseNumericOption(Arg + 3, &Config.BufferLines, 1, UINT_MAX))
 					return -1;
