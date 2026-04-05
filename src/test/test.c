@@ -431,6 +431,32 @@ static void Test_UnicodeBomEquivalence(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_AutoModeBomEquivalence(const WCHAR* baseDir)
+{
+	// Verify that FC_MODE_AUTO also strips the UTF-8 BOM before comparing lines,
+	// so a file with a BOM compares equal to the same content without a BOM.
+	const unsigned char bom[] = { 0xEF,0xBB,0xBF };
+	const char* text = "Hello\n";
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"auto_bom1.txt", tp.p1);
+	ConcatPath(baseDir, L"auto_bom2.txt", tp.p2);
+	unsigned char bomAndText[32];
+	DWORD bomLen = (DWORD)sizeof(bom);
+	size_t cch;
+	if (FAILED(StringCchLengthA(text, STRSAFE_MAX_CCH, &cch))) Throw(L"Bad string", NULL);
+	DWORD textLen = (DWORD)cch;
+	CopyMemory(bomAndText, bom, bomLen);
+	CopyMemory(bomAndText + bomLen, text, textLen);
+	if (!WriteDataFile(tp.p1, bomAndText, bomLen + textLen)) Throw(L"write BOM+text failed", tp.p1);
+	WRITE_STR_FILE(tp.p2, text);
+	DIFF_TEST_CONTEXT testCtx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	FreeTestPaths(&tp);
+}
+
 static void Test_BinaryExactMatch(const WCHAR* baseDir)
 {
 	const unsigned char data[] = { 0x00,0xFF,0x7F,0x80 };
@@ -1083,6 +1109,7 @@ int wmain(void)
 	Test_UnicodeDiacritics(testDir);
 	Test_UnicodeEmojiMultiline(testDir);
 	Test_UnicodeBomEquivalence(testDir);
+	Test_AutoModeBomEquivalence(testDir);
 	Test_BinaryExactMatch(testDir);
 	Test_BinaryMiddleDiff(testDir);
 	Test_BinarySizeDiff(testDir);
