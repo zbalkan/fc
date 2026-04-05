@@ -111,18 +111,11 @@ extern "C" {
 	// External NTDLL APIs
 	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
 
-#ifndef __deref_opt_out_opt
-#define __deref_opt_out_opt _Deref_opt_out_opt_
-#endif
-#ifndef __reserved
-#define __reserved
-#endif
-
 	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
 		_In_ PCWSTR DosFileName,
 		_Out_ PUNICODE_STRING NtFileName,
-		__deref_opt_out_opt PWSTR* FilePart,
-		__reserved PVOID Reserved
+		_Outptr_opt_result_maybenull_ PWSTR* FilePart,
+		_Reserved_ PVOID Reserved
 	);
 
 	/**
@@ -1272,8 +1265,11 @@ extern "C" {
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
 
-		// Skip UTF-8 BOM (0xEF 0xBB 0xBF) at the start of the buffer in Unicode mode.
-		if (Config->Mode == FC_MODE_TEXT_UNICODE &&
+		// Skip UTF-8 BOM (0xEF 0xBB 0xBF) at the start of the buffer in Unicode or
+		// auto-detect mode. In auto mode, _FC_CompareFilesInternal calls _FC_CompareFilesText
+		// (and thus _FC_ParseLines) with Config->Mode still set to FC_MODE_AUTO, so without
+		// this check the three BOM bytes would be treated as part of the first line.
+		if ((Config->Mode == FC_MODE_TEXT_UNICODE || Config->Mode == FC_MODE_AUTO) &&
 			BufferLength >= 3 &&
 			(unsigned char)Ptr[0] == 0xEF &&
 			(unsigned char)Ptr[1] == 0xBB &&
