@@ -273,14 +273,29 @@ extern "C" {
 	} _FC_MATCH;
 
 	/**
+	 * @struct _FC_LCS_LINK
+	 * @brief A single node in the LCS backtracking chain.
+	 *
+	 * Each time the Thresholds array is updated at level k, one link node is
+	 * appended to the pool.  Links[k] holds the pool index of the most recent
+	 * such node; PrevLink chains back to the length-(k-1) predecessor.
+	 * @internal
+	 */
+	typedef struct {
+		size_t AIdx;      /**< Line index in file A. */
+		size_t BIdx;      /**< Line index in file B. */
+		size_t PrevLink;  /**< Pool index of the predecessor link, or SIZE_MAX if none. */
+	} _FC_LCS_LINK;
+
+	/**
 	 * @struct _FC_LCS_CONTEXT
 	 * @brief Holds the intermediate data structures for the Hunt-McIlroy LCS algorithm.
 	 * @internal
 	 */
 	typedef struct {
-		size_t* Thresholds;     /**< Stores the smallest ending line index in B for an LCS of a given length. */
-		size_t* PredecessorsA;  /**< For each line in A, stores the previous line's index in B from the LCS path. */
-		size_t* PredecessorsB;  /**< For each line in A, stores its own line index in B if it's part of a potential LCS path. */
+		size_t* Thresholds;  /**< THRESH[k]: smallest B-end index for an LCS of length k. */
+		size_t* Links;       /**< Links[k]: pool index of the best length-k chain; SIZE_MAX = none. */
+		_FC_BUFFER LinkPool; /**< Pool of _FC_LCS_LINK nodes, grown on each Threshold update. */
 	} _FC_LCS_CONTEXT;
 
 	/**
@@ -1133,13 +1148,19 @@ extern "C" {
 		}
 
 		Ctx.Thresholds = (size_t*)HeapAlloc(GetProcessHeap(), 0, (pBufferA->Count + 1) * sizeof(size_t));
-		Ctx.PredecessorsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
-		Ctx.PredecessorsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, pBufferA->Count * sizeof(size_t));
-		if (!Ctx.Thresholds || !Ctx.PredecessorsA || !Ctx.PredecessorsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
+		Ctx.Links = (size_t*)HeapAlloc(GetProcessHeap(), 0, (pBufferA->Count + 1) * sizeof(size_t));
+		if (!Ctx.Thresholds || !Ctx.Links) { Result = FC_ERROR_MEMORY; goto cleanup; }
+
+		_FC_BufferInit(&Ctx.LinkPool, sizeof(_FC_LCS_LINK));
 
 		size_t LcsLength = 0;
 		Ctx.Thresholds[0] = (size_t)-1;
-		for (size_t i = 1; i <= pBufferA->Count; ++i) Ctx.Thresholds[i] = SIZE_MAX;
+		Ctx.Links[0] = SIZE_MAX;
+		for (size_t i = 1; i <= pBufferA->Count; ++i)
+		{
+			Ctx.Thresholds[i] = SIZE_MAX;
+			Ctx.Links[i] = SIZE_MAX;
+		}
 
 		for (size_t i = 0; i < pBufferA->Count; ++i) {
 			UINT hashA = ((_FC_LINE*)_FC_BufferGet(pBufferA, i))->Hash;
@@ -1155,9 +1176,17 @@ extern "C" {
 					k = low;
 
 					if (match->IndexInB < Ctx.Thresholds[k]) {
+						_FC_LCS_LINK newNode;
+						newNode.AIdx = i;
+						newNode.BIdx = match->IndexInB;
+						newNode.PrevLink = (k > 1) ? Ctx.Links[k - 1] : SIZE_MAX;
+						if (!_FC_BufferAppend(&Ctx.LinkPool, &newNode))
+						{
+							Result = FC_ERROR_MEMORY;
+							goto cleanup;
+						}
 						Ctx.Thresholds[k] = match->IndexInB;
-						Ctx.PredecessorsA[i] = (k > 1) ? Ctx.Thresholds[k - 1] : (size_t)-1;
-						Ctx.PredecessorsB[i] = match->IndexInB;
+						Ctx.Links[k] = Ctx.LinkPool.Count - 1;
 						if (k > LcsLength) LcsLength = k;
 					}
 				}
@@ -1169,28 +1198,12 @@ extern "C" {
 			LcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
 			if (!LcsA || !LcsB) { Result = FC_ERROR_MEMORY; goto cleanup; }
 
-			size_t currentB = Ctx.Thresholds[LcsLength];
-			size_t currentA = 0;
-			for (size_t i = pBufferA->Count - 1; i != (size_t)-1; --i) {
-				if (Ctx.PredecessorsB[i] == currentB) {
-					currentA = i;
-					break;
-				}
-			}
-
-			for (size_t i = LcsLength; i > 0; --i) {
-				LcsA[i - 1] = currentA;
-				LcsB[i - 1] = currentB;
-				size_t prevB = Ctx.PredecessorsA[currentA];
-				currentB = prevB;
-				if (currentB == (size_t)-1) break;
-
-				for (size_t j = currentA - 1; j != (size_t)-1; --j) {
-					if (Ctx.PredecessorsB[j] == currentB) {
-						currentA = j;
-						break;
-					}
-				}
+			size_t curLink = Ctx.Links[LcsLength];
+			for (size_t i = LcsLength; i > 0 && curLink != SIZE_MAX; --i) {
+				_FC_LCS_LINK* node = (_FC_LCS_LINK*)_FC_BufferGet(&Ctx.LinkPool, curLink);
+				LcsA[i - 1] = node->AIdx;
+				LcsB[i - 1] = node->BIdx;
+				curLink = node->PrevLink;
 			}
 		}
 
@@ -1213,8 +1226,8 @@ extern "C" {
 		_FC_HashMapFree(&MapB);
 		_FC_HeapFree(MatchPool);
 		_FC_HeapFree(Ctx.Thresholds);
-		_FC_HeapFree(Ctx.PredecessorsA);
-		_FC_HeapFree(Ctx.PredecessorsB);
+		_FC_HeapFree(Ctx.Links);
+		_FC_BufferFree(&Ctx.LinkPool);
 		_FC_HeapFree(LcsA);
 		_FC_HeapFree(LcsB);
 		// The filtered arrays are now owned by these pointers, so we must free them.

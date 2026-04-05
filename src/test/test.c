@@ -991,6 +991,24 @@ static void Test_TextAscii_CollapsedChangeBlock(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_TextAscii_DuplicateLinesLcs(const WCHAR* baseDir)
+{
+	// A = ["common","diff_A","common"], B = ["diff_B","common","diff_B","common"]
+	// LCS must be the two "common" lines; expect exactly 2 diff hunks.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"dup1.txt", tp.p1);
+	ConcatPath(baseDir, L"dup2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "common\ndiff_A\ncommon\n");
+	WRITE_STR_FILE(tp.p2, "diff_B\ncommon\ndiff_B\ncommon\n");
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount == 2);
+	FreeTestPaths(&tp);
+}
+
 static void Test_Binary_AllMismatches(const WCHAR* baseDir)
 {
 	// Files differ at 3 byte positions (2, 3, 4).  The binary comparison must
@@ -1086,6 +1104,7 @@ int wmain(void)
 	Test_TextAscii_MultipleHunks(testDir);
 	Test_TextAscii_ResyncThreshold(testDir);
 	Test_TextAscii_CollapsedChangeBlock(testDir);
+	Test_TextAscii_DuplicateLinesLcs(testDir);
 	Test_Binary_AllMismatches(testDir);
 	Test_TextAscii_LineNumberAccuracy(testDir);
 
