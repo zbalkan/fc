@@ -310,8 +310,9 @@ PrintUsage(void)
 	ConPrintW(hOut, L"  /nnnn Set resync line threshold (default 2)\n");
 	ConPrintW(hOut, L"  /LBn  Set internal buffer size for text lines (default 100)\n");
 	ConPrintW(hOut, L"(If neither /L, /B nor /U is specified, the mode is auto-detected from\n");
-	ConPrintW(hOut, L" file content: a null byte means binary; a UTF BOM or >=90%% printable\n");
-	ConPrintW(hOut, L" ASCII means text. This differs from fc.exe, which defaults to /L.)\n");
+	ConPrintW(hOut, L" file content in this order: a UTF BOM means text; otherwise a null byte\n");
+	ConPrintW(hOut, L" means binary; otherwise >=90%% printable ASCII means text. This differs\n");
+	ConPrintW(hOut, L" from fc.exe, which defaults to /L.)\n");
 }
 
 _Success_(return == TRUE)

@@ -69,9 +69,10 @@ fc.exe [options] <file1> <file2>
 > **Design note — default mode differs from Windows `fc.exe`:**
 > The standard `fc.exe` defaults to text mode (`/L`) when no mode flag is given.
 > This tool instead **auto-detects** whether each file is binary or text by inspecting
-> the first 4 KB of its content. A file is treated as binary if it contains a null byte
-> (`0x00`); it is treated as text if it begins with a recognised UTF BOM or if at least
-> 90 % of its bytes are printable ASCII characters (including TAB, CR, LF).
+> the first 4 KB of its content. The heuristic is applied in order: if a file begins
+> with a recognised UTF BOM, it is treated as text; otherwise, if it contains a null
+> byte (`0x00`), it is treated as binary; otherwise, it is treated as text only if at
+> least 90 % of its bytes are printable ASCII characters (including TAB, CR, LF).
 > If either file is classified as binary, binary comparison is used for the pair.
 > This is an intentional design decision to improve safety and correctness when
 > comparing files without an explicit mode flag. Use `/L`, `/U`, or `/B` to override
