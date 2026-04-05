@@ -1,0 +1,41 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build and run tests (MSVC / x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build test project (Release|x64)
+        run: |
+          msbuild src\fc.sln `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /m `
+            /nologo `
+            /verbosity:minimal
+
+      - name: Run tests
+        run: |
+          $exe = "src\x64\Release\fc.test.exe"
+          & $exe
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Tests failed with exit code $LASTEXITCODE"
+            exit $LASTEXITCODE
+          }
