@@ -7,11 +7,22 @@
  */
 
 #include "filecheck.h"
-#include <stdio.h>
 #include <stdlib.h>  // For wcstoul
-#include <wchar.h>   // For wcsncmp, wprintf
+#include <wchar.h>   // For wcsncmp, wcslen, swprintf_s
 #include <ctype.h>   // For iswdigit, towupper
 #include <strsafe.h> // For StringCchLengthW
+
+/**
+ * @brief Writes a wide-character string to a console handle.
+ * @internal
+ * @param hConsole The console handle (e.g., STD_OUTPUT_HANDLE or STD_ERROR_HANDLE).
+ * @param msg      The null-terminated wide string to write.
+ */
+static void
+ConPrintW(_In_ HANDLE hConsole, _In_z_ const WCHAR* msg)
+{
+	WriteConsoleW(hConsole, msg, (DWORD)wcslen(msg), NULL, NULL);
+}
 
  /**
  * @struct TEXT_DIFF_USER_DATA
@@ -37,7 +48,7 @@ GetLine(_In_ const _FC_BUFFER* Buffer, _In_ size_t Index)
 }
 
 /**
- * @brief Prints a range of lines from a buffer to stdout.
+ * @brief Prints a range of lines from a buffer to the console.
  * @internal
  */
 static void
@@ -47,15 +58,30 @@ PrintLines(
 	_In_ size_t End,
 	_In_ BOOL ShowLineNumbers)
 {
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	for (size_t i = Start; i < End; ++i)
 	{
 		const _FC_LINE* line = GetLine(Lines, i);
 		if (line != NULL && line->Text != NULL)
 		{
 			if (ShowLineNumbers)
-				printf("%5zu:  %s\n", i + 1, line->Text);
-			else
-				printf("%s\n", line->Text);
+			{
+				WCHAR numBuf[16];
+				swprintf_s(numBuf, 16, L"%5zu:  ", i + 1);
+				ConPrintW(hOut, numBuf);
+			}
+			int wLen = MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, NULL, 0);
+			if (wLen > 0)
+			{
+				WCHAR* wText = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wLen * sizeof(WCHAR));
+				if (wText != NULL)
+				{
+					MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, wText, wLen);
+					WriteConsoleW(hOut, wText, (DWORD)(wLen - 1), NULL, NULL);
+					HeapFree(GetProcessHeap(), 0, wText);
+				}
+			}
+			WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 		}
 	}
 }
@@ -101,24 +127,26 @@ TextDiffCallback(
 		Block->Type == FC_DIFF_TYPE_DELETE ||
 		Block->Type == FC_DIFF_TYPE_ADD)
 	{
-		// Print first file block - use %ls for wide string explicitly
-		wprintf(L"***** %ls\n", Context->Path1);
-		fflush(stdout);  // Flush wide char output before switching to narrow
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+
+		// Print first file block
+		WriteConsoleW(hOut, L"***** ", 6, NULL, NULL);
+		ConPrintW(hOut, Context->Path1);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
 			PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
 
-		fflush(stdout);  // Flush narrow char output before switching to wide
-		// Print second file block - use %ls for wide string explicitly
-		wprintf(L"***** %ls\n", Context->Path2);
-		fflush(stdout);  // Flush wide char output before switching to narrow
+		// Print second file block
+		WriteConsoleW(hOut, L"***** ", 6, NULL, NULL);
+		ConPrintW(hOut, Context->Path2);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
 			PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
 
 		// Print closing marker
-		printf("*****\n");
-		fflush(stdout);  // Ensure output is written before returning
+		WriteConsoleW(hOut, L"*****\n", 6, NULL, NULL);
 	}
 }
 
@@ -140,17 +168,25 @@ BinaryDiffCallback(
 	_In_ const FC_USER_CONTEXT* Context,
 	_In_ const FC_DIFF_BLOCK* Block)
 {
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	WCHAR buf[128];
+
 	if (Block->Type == FC_DIFF_TYPE_SIZE)
 	{
 		// Always report as "[longer_file] longer than [shorter_file]", matching Windows fc.exe.
-		if (Block->StartA > Block->StartB)
-			wprintf(L"FC: %ls longer than %ls\n", Context->Path1, Context->Path2);
-		else
-			wprintf(L"FC: %ls longer than %ls\n", Context->Path2, Context->Path1);
+		const WCHAR* LongerPath  = (Block->StartA > Block->StartB) ? Context->Path1 : Context->Path2;
+		const WCHAR* ShorterPath = (Block->StartA > Block->StartB) ? Context->Path2 : Context->Path1;
+		WriteConsoleW(hOut, L"FC: ", 4, NULL, NULL);
+		ConPrintW(hOut, LongerPath);
+		WriteConsoleW(hOut, L" longer than ", 13, NULL, NULL);
+		ConPrintW(hOut, ShorterPath);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 	}
 	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
-		printf("%08zX: %02X %02X\n", Block->StartA, (unsigned char)Block->EndA, (unsigned char)Block->EndB);
+		swprintf_s(buf, 128, L"%08zX: %02X %02X\n",
+			Block->StartA, (unsigned int)(unsigned char)Block->EndA, (unsigned int)(unsigned char)Block->EndB);
+		ConPrintW(hOut, buf);
 	}
 }
 
@@ -160,18 +196,19 @@ BinaryDiffCallback(
 static void
 PrintUsage(void)
 {
-	printf("Usage: fc.exe [options] file1 file2\n");
-	printf("Options:\n");
-	printf("  /B    Binary comparison\n");
-	printf("  /C    Case-insensitive comparison\n");
-	printf("  /W    Ignore whitespace differences\n");
-	printf("  /L    ASCII text comparison (default)\n");
-	printf("  /N    Show line numbers in text mode\n");
-	printf("  /T    Do not expand tabs\n");
-	printf("  /U    Unicode text comparison\n");
-	printf("  /nnnn Set resync line threshold (default 2)\n");
-	printf("  /LBn  Set internal buffer size for text lines (default 100)\n");
-	printf("(If neither L, B or U is specified, auto-detect is used)\n");
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	ConPrintW(hOut, L"Usage: fc.exe [options] file1 file2\n");
+	ConPrintW(hOut, L"Options:\n");
+	ConPrintW(hOut, L"  /B    Binary comparison\n");
+	ConPrintW(hOut, L"  /C    Case-insensitive comparison\n");
+	ConPrintW(hOut, L"  /W    Ignore whitespace differences\n");
+	ConPrintW(hOut, L"  /L    ASCII text comparison (default)\n");
+	ConPrintW(hOut, L"  /N    Show line numbers in text mode\n");
+	ConPrintW(hOut, L"  /T    Do not expand tabs\n");
+	ConPrintW(hOut, L"  /U    Unicode text comparison\n");
+	ConPrintW(hOut, L"  /nnnn Set resync line threshold (default 2)\n");
+	ConPrintW(hOut, L"  /LBn  Set internal buffer size for text lines (default 100)\n");
+	ConPrintW(hOut, L"(If neither L, B or U is specified, auto-detect is used)\n");
 }
 
 _Success_(return == TRUE)
@@ -189,7 +226,10 @@ ParseNumericOption(
 
 	if (*EndPtr != L'\0' || ParsedValue < MinValue || ParsedValue > MaxValue || errno == ERANGE)
 	{
-		wprintf(L"Invalid numeric option: %s\n", OptionString);
+		HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+		WCHAR buf[256];
+		swprintf_s(buf, 256, L"Invalid numeric option: %s\n", OptionString);
+		ConPrintW(hErr, buf);
 		return FALSE;
 	}
 
@@ -432,13 +472,18 @@ WildcardFileCompare(
 	{
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
-		fprintf(stderr, "Error: memory allocation failure during wildcard expansion.\n");
+		ConPrintW(GetStdHandle(STD_ERROR_HANDLE), L"Error: memory allocation failure during wildcard expansion.\n");
 		return 2;
 	}
 
 	if (Exp1->Count == 0 && Exp2->Count == 0)
 	{
-		wprintf(L"FC: no files found for %ls or %ls\n", Pattern1, Pattern2);
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, Pattern1);
+		WriteConsoleW(hOut, L" or ", 4, NULL, NULL);
+		ConPrintW(hOut, Pattern2);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -446,7 +491,10 @@ WildcardFileCompare(
 
 	if (Exp1->Count == 0)
 	{
-		wprintf(L"FC: no files found for %ls\n", Pattern1);
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, Pattern1);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -454,7 +502,10 @@ WildcardFileCompare(
 
 	if (Exp2->Count == 0)
 	{
-		wprintf(L"FC: no files found for %ls\n", Pattern2);
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, Pattern2);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -466,8 +517,10 @@ WildcardFileCompare(
 	if (Exp1->Count != Exp2->Count)
 	{
 		PairCount = Exp1->Count < Exp2->Count ? Exp1->Count : Exp2->Count;
-		wprintf(L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
+		WCHAR buf[128];
+		swprintf_s(buf, 128, L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
 			Exp1->Count, Exp2->Count, PairCount);
+		ConPrintW(GetStdHandle(STD_OUTPUT_HANDLE), buf);
 	}
 	else
 	{
@@ -481,7 +534,12 @@ WildcardFileCompare(
 		const WCHAR* File1 = Exp1->Paths[i];
 		const WCHAR* File2 = Exp2->Paths[i];
 
-		wprintf(L"Comparing files %ls and %ls\n", File1, File2);
+		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+		WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+		ConPrintW(hOut, File1);
+		WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+		ConPrintW(hOut, File2);
+		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 
 		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
 
@@ -496,11 +554,19 @@ WildcardFileCompare(
 			break;
 		case FC_ERROR_IO:
 		case FC_ERROR_MEMORY:
-			fwprintf(stderr, L"Error during comparison of %ls and %ls: %d\n",
-				File1, File2, Result);
+		{
+			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+			WriteConsoleW(hErr, L"Error during comparison of ", 27, NULL, NULL);
+			ConPrintW(hErr, File1);
+			WriteConsoleW(hErr, L" and ", 5, NULL, NULL);
+			ConPrintW(hErr, File2);
+			WCHAR errBuf[32];
+			swprintf_s(errBuf, 32, L": %d\n", Result);
+			ConPrintW(hErr, errBuf);
 			if (OverallResult < 2)
 				OverallResult = 2;
 			break;
+		}
 		default:
 			if (OverallResult == 0)
 				OverallResult = -1;
@@ -575,14 +641,20 @@ wmain(
 
 				if (!Handled)
 				{
-					wprintf(L"Invalid option: %s\n", Option);
+					HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+					WCHAR buf[256];
+					swprintf_s(buf, 256, L"Invalid option: %s\n", Option);
+					ConPrintW(hErr, buf);
 					return -1;
 				}
 			}
 		}
 		else
 		{
-			wprintf(L"Invalid argument: %s\n", Option);
+			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+			WCHAR buf[256];
+			swprintf_s(buf, 256, L"Invalid argument: %s\n", Option);
+			ConPrintW(hErr, buf);
 			return -1;
 		}
 	}
@@ -607,7 +679,12 @@ wmain(
 		return WildcardFileCompare(File1, File2, &Config);
 	}
 
-	wprintf(L"Comparing files %ls and %ls\n", File1, File2);
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+	ConPrintW(hOut, File1);
+	WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+	ConPrintW(hOut, File2);
+	WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
@@ -621,8 +698,13 @@ wmain(
 		return 1;
 	case FC_ERROR_IO:
 	case FC_ERROR_MEMORY:
-		fprintf(stderr, "Error during comparison: %d\n", Result);
+	{
+		HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+		WCHAR errBuf[64];
+		swprintf_s(errBuf, 64, L"Error during comparison: %d\n", Result);
+		ConPrintW(hErr, errBuf);
 		return 2;
+	}
 	default:
 		// Invalid parameter or other syntax error
 		return -1;
