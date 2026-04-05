@@ -227,8 +227,8 @@ extern "C" {
 
 	// All functions and structs below are not part of the public API.
 
-#ifndef ARRAYSIZE
-#define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
+#ifndef _FC_ARRAYSIZE
+#define _FC_ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
 #endif
 
 	/**
@@ -1896,7 +1896,7 @@ extern "C" {
 			base++;
 		}
 
-		for (int i = 0; i < ARRAYSIZE(g_ReservedDevices); ++i)
+		for (int i = 0; i < _FC_ARRAYSIZE(g_ReservedDevices); ++i)
 		{
 			if (_wcsicmp(base, g_ReservedDevices[i]) == 0)
 			{

@@ -69,7 +69,7 @@ inline static WCHAR* AllocWcharPath()
 }
 inline static char* AllocCharPath()
 {
-	char* ret = (char*)HeapAlloc(GetProcessHeap(), 0, MAX_LONG_PATH * sizeof(char));
+	char* ret = (char*)HeapAlloc(GetProcessHeap(), 0, UTF8_BUFFER_SIZE * sizeof(char));
 	if (!ret) {
 		Throw(L"Test setup failed: HeapAlloc", NULL);
 	}
