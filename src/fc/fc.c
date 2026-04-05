@@ -483,11 +483,12 @@ WildcardFileCompare(
 	if (Exp1->Count == 0 && Exp2->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		DWORD written;
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, &written, NULL);
 		ConPrintW(hOut, Pattern1);
-		WriteConsoleW(hOut, L" or ", 4, NULL, NULL);
+		WriteConsoleW(hOut, L" or ", 4, &written, NULL);
 		ConPrintW(hOut, Pattern2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		WriteConsoleW(hOut, L"\n", 1, &written, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -496,9 +497,10 @@ WildcardFileCompare(
 	if (Exp1->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		DWORD written;
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, &written, NULL);
 		ConPrintW(hOut, Pattern1);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		WriteConsoleW(hOut, L"\n", 1, &written, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -507,9 +509,10 @@ WildcardFileCompare(
 	if (Exp2->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		DWORD written;
+		WriteConsoleW(hOut, L"FC: no files found for ", 23, &written, NULL);
 		ConPrintW(hOut, Pattern2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		WriteConsoleW(hOut, L"\n", 1, &written, NULL);
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -539,11 +542,12 @@ WildcardFileCompare(
 		const WCHAR* File2 = Exp2->Paths[i];
 
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+		DWORD written;
+		WriteConsoleW(hOut, L"Comparing files ", 16, &written, NULL);
 		ConPrintW(hOut, File1);
-		WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+		WriteConsoleW(hOut, L" and ", 5, &written, NULL);
 		ConPrintW(hOut, File2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		WriteConsoleW(hOut, L"\n", 1, &written, NULL);
 
 		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
 
@@ -560,9 +564,10 @@ WildcardFileCompare(
 		case FC_ERROR_MEMORY:
 		{
 			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
-			WriteConsoleW(hErr, L"Error during comparison of ", 27, NULL, NULL);
+			DWORD written;
+			WriteConsoleW(hErr, L"Error during comparison of ", 27, &written, NULL);
 			ConPrintW(hErr, File1);
-			WriteConsoleW(hErr, L" and ", 5, NULL, NULL);
+			WriteConsoleW(hErr, L" and ", 5, &written, NULL);
 			ConPrintW(hErr, File2);
 			WCHAR errBuf[32];
 			swprintf_s(errBuf, 32, L": %d\n", Result);
@@ -684,11 +689,12 @@ wmain(
 	}
 
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-	WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+	DWORD written;
+	WriteConsoleW(hOut, L"Comparing files ", 16, &written, NULL);
 	ConPrintW(hOut, File1);
-	WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+	WriteConsoleW(hOut, L" and ", 5, &written, NULL);
 	ConPrintW(hOut, File2);
-	WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+	WriteConsoleW(hOut, L"\n", 1, &written, NULL);
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
