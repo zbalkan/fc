@@ -87,6 +87,41 @@ GetLine(_In_ const _FC_BUFFER* Buffer, _In_ size_t Index)
 }
 
 /**
+ * @brief Prints a single line from a buffer to the console.
+ * @internal
+ */
+static void
+PrintOneLine(
+	_In_ HANDLE hOut,
+	_In_ const _FC_BUFFER* Lines,
+	_In_ size_t Index,
+	_In_ BOOL ShowLineNumbers)
+{
+	const _FC_LINE* line = GetLine(Lines, Index);
+	if (line == NULL || line->Text == NULL)
+		return;
+
+	if (ShowLineNumbers)
+	{
+		WCHAR numBuf[16];
+		swprintf_s(numBuf, 16, L"%5zu:  ", Index + 1);
+		ConPrintW(hOut, numBuf);
+	}
+	int wLen = MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, NULL, 0);
+	if (wLen > 0)
+	{
+		WCHAR* wText = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wLen * sizeof(WCHAR));
+		if (wText != NULL)
+		{
+			MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, wText, wLen);
+			ConPrintW(hOut, wText);
+			HeapFree(GetProcessHeap(), 0, wText);
+		}
+	}
+	ConPrintW(hOut, L"\n");
+}
+
+/**
  * @brief Prints a range of lines from a buffer to the console.
  * @internal
  */
@@ -99,29 +134,40 @@ PrintLines(
 {
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	for (size_t i = Start; i < End; ++i)
+		PrintOneLine(hOut, Lines, i, ShowLineNumbers);
+}
+
+/**
+ * @brief Prints abbreviated lines (first and last only, with "..." for omitted lines).
+ *
+ * Matches the /A flag behavior of Windows fc.exe: when a diff block contains
+ * three or more lines, only the first and last lines are shown with "..." between
+ * them to indicate omitted content.
+ *
+ * @internal
+ */
+static void
+PrintLinesAbbreviated(
+	_In_ const _FC_BUFFER* Lines,
+	_In_ size_t Start,
+	_In_ size_t End,
+	_In_ BOOL ShowLineNumbers)
+{
+	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+	size_t Count = (End > Start) ? (End - Start) : 0;
+
+	if (Count <= 2)
 	{
-		const _FC_LINE* line = GetLine(Lines, i);
-		if (line != NULL && line->Text != NULL)
-		{
-			if (ShowLineNumbers)
-			{
-				WCHAR numBuf[16];
-				swprintf_s(numBuf, 16, L"%5zu:  ", i + 1);
-				ConPrintW(hOut, numBuf);
-			}
-			int wLen = MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, NULL, 0);
-			if (wLen > 0)
-			{
-				WCHAR* wText = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wLen * sizeof(WCHAR));
-				if (wText != NULL)
-				{
-					MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, wText, wLen);
-					ConPrintW(hOut, wText);
-					HeapFree(GetProcessHeap(), 0, wText);
-				}
-			}
-			ConPrintW(hOut, L"\n");
-		}
+		// One or two lines: show all of them.
+		for (size_t i = Start; i < End; ++i)
+			PrintOneLine(hOut, Lines, i, ShowLineNumbers);
+	}
+	else
+	{
+		// Three or more: show first, "...", last.
+		PrintOneLine(hOut, Lines, Start, ShowLineNumbers);
+		ConPrintW(hOut, L"...\n");
+		PrintOneLine(hOut, Lines, End - 1, ShowLineNumbers);
 	}
 }
 
@@ -159,8 +205,13 @@ TextDiffCallback(
 		return;
 
 	BOOL ShowLineNumbers = FALSE;
+	BOOL Abbreviated = FALSE;
 	if (Context->UserData != NULL)
-		ShowLineNumbers = (((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags & FC_SHOW_LINE_NUMS) != 0;
+	{
+		UINT Flags = ((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags;
+		ShowLineNumbers = (Flags & FC_SHOW_LINE_NUMS) != 0;
+		Abbreviated = (Flags & FC_ABBREVIATED) != 0;
+	}
 
 	if (Block->Type == FC_DIFF_TYPE_CHANGE ||
 		Block->Type == FC_DIFF_TYPE_DELETE ||
@@ -174,7 +225,12 @@ TextDiffCallback(
 		ConPrintW(hOut, L"\n");
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
-			PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+		{
+			if (Abbreviated)
+				PrintLinesAbbreviated(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+			else
+				PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+		}
 
 		// Print second file block
 		ConPrintW(hOut, L"***** ");
@@ -182,10 +238,15 @@ TextDiffCallback(
 		ConPrintW(hOut, L"\n");
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
-			PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+		{
+			if (Abbreviated)
+				PrintLinesAbbreviated(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+			else
+				PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+		}
 
-		// Print closing marker
-		ConPrintW(hOut, L"*****\n");
+		// Print closing marker followed by a blank line (matching Windows fc.exe output).
+		ConPrintW(hOut, L"*****\n\n");
 	}
 }
 
@@ -238,6 +299,7 @@ PrintUsage(void)
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	ConPrintW(hOut, L"Usage: fc.exe [options] file1 file2\n");
 	ConPrintW(hOut, L"Options:\n");
+	ConPrintW(hOut, L"  /A    Abbreviated output (first and last line of each difference block)\n");
 	ConPrintW(hOut, L"  /B    Binary comparison\n");
 	ConPrintW(hOut, L"  /C    Case-insensitive comparison\n");
 	ConPrintW(hOut, L"  /W    Ignore whitespace differences\n");
@@ -283,6 +345,7 @@ typedef struct {
 } OPTION_MAP;
 
 static const OPTION_MAP g_OptionMap[] = {
+	{ L'A', FC_ABBREVIATED, 0 },
 	{ L'B', 0, FC_MODE_BINARY },
 	{ L'C', FC_IGNORE_CASE, 0 },
 	{ L'W', FC_IGNORE_WS, 0 },
@@ -578,13 +641,14 @@ WildcardFileCompare(
 		ConPrintW(hOut, File1);
 		ConPrintW(hOut, L" and ");
 		ConPrintW(hOut, File2);
-		ConPrintW(hOut, L"\n");
+		ConPrintW(hOut, L"\n\n");
 
 		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
 
 		switch (Result)
 		{
 		case FC_OK:
+			ConPrintW(hOut, L"FC: no differences encountered\n");
 			// Identical – keep OverallResult as-is (0 or already 1).
 			break;
 		case FC_DIFFERENT:
@@ -648,8 +712,19 @@ wmain(
 
 		if (Option[0] == L'/' || Option[0] == L'-')
 		{
+			// Handle /? — print usage and exit.
+			if (Option[1] == L'?')
+			{
+				PrintUsage();
+				return 0;
+			}
+			// Silently accept /OFF and /OFFLINE (offline-file flags, no-op on local files).
+			else if (_wcsicmp(Option + 1, L"OFF") == 0 || _wcsicmp(Option + 1, L"OFFLINE") == 0)
+			{
+				// No-op: accepted for compatibility with Windows fc.exe.
+			}
 			// Check for numeric resync line option (e.g., /20)
-			if (iswdigit(Option[1]))
+			else if (iswdigit(Option[1]))
 			{
 				if (!ParseNumericOption(Option + 1, &Config.ResyncLines, 1, UINT_MAX))
 					return -1;
@@ -723,14 +798,14 @@ wmain(
 	ConPrintW(hOut, File1);
 	ConPrintW(hOut, L" and ");
 	ConPrintW(hOut, File2);
-	ConPrintW(hOut, L"\n");
+	ConPrintW(hOut, L"\n\n");
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
 	switch (Result)
 	{
 	case FC_OK:
-		// Files are identical
+		ConPrintW(hOut, L"FC: no differences encountered\n");
 		return 0;
 	case FC_DIFFERENT:
 		// Differences were found and printed by the callback
