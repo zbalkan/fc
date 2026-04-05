@@ -25,49 +25,23 @@ The entire codebase is written in pure C and has no external dependencies beyond
 *   **Flexible API**: The library exposes a clean API that accepts both UTF-8 and native UTF-16 paths.
 *   **Correct Unicode Support**: Provides a dedicated mode for proper, Unicode-aware case-insensitive comparisons for international text.
 *   **`fc.exe` Compatibility**: The command-line app supports all major `fc.exe` options.
+    *   `/A` - Abbreviated output (first and last line of each difference block)
     *   `/B` - Binary comparison
     *   `/C` - Case-insensitive text comparison
     *   `/L` - ASCII text comparison
-    *   `/W` - Ignore whitespace differences
+    *   `/LBn` - Set internal line buffer size (default: 100)
     *   `/N` - Display line numbers in text mode output
-    *   `/U` - Unicode-aware text comparison
     *   `/T` - Do not expand tabs to spaces
-*   **Text Diff Output**: The tool now displays line-by-line differences in a format compatible with Windows `fc.exe`, showing difference blocks with proper sectioning using asterisk markers.
+    *   `/U` - Unicode-aware text comparison
+    *   `/W` - Ignore whitespace differences
+    *   `/nnnn` - Set resync line threshold (default: 2)
+*   **Text Diff Output**: Displays line-by-line differences in a format compatible with Windows `fc.exe`, showing difference blocks with proper sectioning using asterisk markers.
 
-## Getting Started
+---
 
-### Prerequisites
+## Usage
 
-*   Microsoft Visual Studio with the "Desktop development with C++" workload installed.
-*   The Windows SDK (usually included with Visual Studio).
-
-### Building the Projects
-
-The repository includes a Visual Studio solution at `src/fc.sln` which contains projects for both the `fc` command-line tool and the `test` suite.
-
-1.  Open `src/fc.sln` in Visual Studio.
-2.  Select a configuration (e.g., `Release` or `Debug`) and platform (e.g., `x64`).
-3.  Build the solution by selecting **Build > Build Solution** from the menu (or by pressing `Ctrl+Shift+B`).
-
-This will produce two executables:
-*   `fc.exe` in the build output directory for the `fc` project.
-*   `test.exe` in the build output directory for the `test` project.
-
-**Note:** The projects are configured to link against `ntdll.lib` to use certain native Windows API functions for path canonicalization.
-
-### Running the Tests
-
-After building the solution, you can run the test suite to validate the library's functionality.
-
-1.  Open a terminal or command prompt.
-2.  Navigate to the build output directory (e.g., `src/x64/Release/`).
-3.  Run the test executable:
-    ```sh
-    test.exe
-    ```
-The test executable will create temporary files, report the status of each test case, and finish with a summary of passed and failed tests.
-
-### Using the Command-Line Tool
+### Command-Line Tool
 
 The syntax is designed to be compatible with the Windows `fc.exe` command.
 
@@ -75,6 +49,22 @@ The syntax is designed to be compatible with the Windows `fc.exe` command.
 ```sh
 fc.exe [options] <file1> <file2>
 ```
+
+**Options:**
+
+| Option  | Description |
+|---------|-------------|
+| `/A`    | Abbreviated output: show only the first and last line of each difference block |
+| `/B`    | Binary comparison |
+| `/C`    | Case-insensitive text comparison |
+| `/L`    | ASCII text comparison (default) |
+| `/LBn`  | Set internal buffer size for text lines (e.g., `/LB200`; default: 100) |
+| `/N`    | Show line numbers in text mode |
+| `/T`    | Do not expand tabs to spaces |
+| `/U`    | Unicode-aware text comparison |
+| `/W`    | Ignore whitespace differences |
+| `/nnnn` | Set resync line threshold (e.g., `/5`; default: 2) |
+| `/?`    | Display help |
 
 **Examples:**
 ```sh
@@ -89,13 +79,29 @@ fc.exe /C /U german_doc1.txt german_doc2.txt
 
 # Display line numbers in text comparison
 fc.exe /N file1.txt file2.txt
+
+# Abbreviated output, showing only the first and last line of each diff block
+fc.exe /A file1.txt file2.txt
+
+# Wildcard comparison (compares matching file pairs across directories)
+fc.exe /B dir1\*.dll dir2\*.dll
 ```
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| `0`  | No differences found |
+| `1`  | Differences found |
+| `2`  | I/O or memory error during comparison |
+| `-1` | Invalid arguments or usage error |
 
 ### Example Text Diff Output
 
 When comparing two text files with differences, the output will show:
 ```
 Comparing files file1.txt and file2.txt
+
 ***** file1.txt
 Line from file 1
 Another line from file 1
@@ -105,19 +111,19 @@ Different content in file 2
 *****
 ```
 
-The `/N` flag will add line numbers to each line of output.
+The `/N` flag adds line numbers to each line of output. The `/A` flag abbreviates long diff blocks to show only the first and last line with `...` for omitted content.
 
-## Using the `filecheck.h` Library
+### Using the `filecheck.h` Library
 
-To use the library in your own project, simply copy `src/fc/filecheck.h` into your source tree and include it.
+To use the library in your own project, copy `src/fc/filecheck.h` into your source tree and include it.
 
-**Important:** Because the library uses native API functions, any project that includes `filecheck.h` must be linked with `ntdll.lib`. In Visual Studio, you can add this in **Project Properties > Linker > Input > Additional Dependencies**.
+**Important:** Because the library uses native API functions, any project that includes `filecheck.h` must be linked with `ntdll.lib`. In Visual Studio, add this in **Project Properties > Linker > Input > Additional Dependencies**.
 
-### Library API
+#### Library API
 
 The library provides two primary functions for maximum flexibility.
 
-#### `FC_CompareFilesW` (Recommended)
+##### `FC_CompareFilesW` (Recommended)
 This is the most efficient function, as it uses native Windows UTF-16 strings directly.
 
 ```c
@@ -127,7 +133,7 @@ FC_RESULT FC_CompareFilesW(
     _In_ const FC_CONFIG* Config);
 ```
 
-#### `FC_CompareFilesUtf8`
+##### `FC_CompareFilesUtf8`
 A convenience wrapper for applications that work with UTF-8 strings.
 
 ```c
@@ -137,7 +143,7 @@ FC_RESULT FC_CompareFilesUtf8(
     _In_ const FC_CONFIG* Config);
 ```
 
-### Example: Library Usage
+#### Example
 
 Here is a simple example of how to use the library in your own C code.
 
@@ -145,24 +151,12 @@ Here is a simple example of how to use the library in your own C code.
 #include "filecheck.h"
 #include <stdio.h>
 
-// A simple callback to print messages to the console
-void MyOutputCallback(void* UserData, const char* Message, int Line1, int Line2)
-{
-    (void)UserData; // Unused
-    if (Line1 >= 0) {
-        printf("Difference on line %d: %s\n", Line1, Message);
-    } else {
-        printf("Info: %s\n", Message);
-    }
-}
-
 int main(void)
 {
     // 1. Configure the comparison
     FC_CONFIG config = {0};
     config.Mode = FC_MODE_AUTO; // Let the library detect if files are text or binary
     config.Flags = FC_IGNORE_CASE | FC_IGNORE_WS; // Ignore case and whitespace for text files
-    config.Output = MyOutputCallback;
 
     // 2. Define file paths (using wide strings for the native API)
     const WCHAR* file1 = L"C:\\docs\\report_v1.txt";
@@ -174,26 +168,75 @@ int main(void)
     // 4. Check the result
     switch (result)
     {
-        case FC_OK:
-            printf("Files are identical.\n");
-            break;
-        case FC_DIFFERENT:
-            printf("Files are different.\n");
-            break;
-        default:
-            printf("An error occurred during comparison: %d\n", result);
-            break;
+        case FC_OK:      wprintf(L"Files are identical.\n");  break;
+        case FC_DIFFERENT: wprintf(L"Files are different.\n"); break;
+        default:         wprintf(L"Error: %d\n", result);     break;
     }
 
     return 0;
 }
 ```
 
+---
+
+## Development
+
+### Prerequisites
+
+*   Microsoft Visual Studio with the "Desktop development with C++" workload installed.
+*   The Windows SDK (usually included with Visual Studio).
+
+### Project Structure
+
+```
+src/
+├── fc.sln                  # Visual Studio solution
+├── fc/
+│   ├── filecheck.h         # Header-only library
+│   ├── fc.c                # Command-line application
+│   └── fc.vcxproj
+└── test/
+    ├── test.c              # Test suite
+    └── fc.test.vcxproj
+```
+
+### Building
+
+The repository includes a Visual Studio solution at `src/fc.sln` which contains projects for both the `fc` command-line tool and the `test` suite.
+
+1.  Open `src/fc.sln` in Visual Studio.
+2.  Select a configuration (e.g., `Release` or `Debug`) and platform (e.g., `x64`).
+3.  Build the solution by selecting **Build > Build Solution** (or press `Ctrl+Shift+B`).
+
+This will produce two executables in the build output directory (e.g., `src/x64/Release/`):
+*   `fc.exe` — the command-line tool.
+*   `fc.test.exe` — the test suite.
+
+**Note:** The projects are configured to link against `ntdll.lib` for native Windows API functions used in path canonicalization.
+
+### Running the Tests
+
+After building the solution, run the test suite to validate the library's functionality:
+
+```sh
+fc.test.exe
+```
+
+The test executable creates temporary files, reports the status of each test case, and finishes with a summary of passed and failed tests.
+
+CI runs automatically on every push and pull request using GitHub Actions (MSVC / x64, Release configuration). See `.github/workflows/test.yml` for the workflow definition.
+
+### Contributing
+
+*   All code is written in pure C using Windows-native APIs (`HeapAlloc`/`HeapFree`, `WriteConsoleW`, `StringCchLengthW`, etc.) — avoid standard C library equivalents where a Windows API alternative exists.
+*   SAL 2.0 annotations (e.g., `_In_z_`, `_Outptr_opt_result_maybenull_`) are used throughout for static analysis.
+*   The library is header-only — all logic lives in `filecheck.h`.
+
+---
+
 ## Future Enhancements
 
-The following features are planned for future releases:
-- **`/A` flag**: Abbreviated output showing only the first and last line of each difference block with resynchronization context
-- Additional resynchronization indicators showing matching lines after difference blocks
+- Additional resynchronization indicators showing matching lines after difference blocks.
 
 ## License
 
