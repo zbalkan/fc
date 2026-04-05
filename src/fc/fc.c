@@ -142,10 +142,11 @@ BinaryDiffCallback(
 {
 	if (Block->Type == FC_DIFF_TYPE_SIZE)
 	{
+		// Always report as "[longer_file] longer than [shorter_file]", matching Windows fc.exe.
 		if (Block->StartA > Block->StartB)
 			wprintf(L"FC: %ls longer than %ls\n", Context->Path1, Context->Path2);
 		else
-			wprintf(L"FC: %ls shorter than %ls\n", Context->Path1, Context->Path2);
+			wprintf(L"FC: %ls longer than %ls\n", Context->Path2, Context->Path1);
 	}
 	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
