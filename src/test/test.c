@@ -18,11 +18,23 @@ int SUCCESS = 0;
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); \
         DWORD w; \
         WCHAR funcNameW[128]; \
+        WCHAR fileW[256]; \
+        WCHAR _lineW[16]; \
+        WCHAR _exprW[512]; \
         MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128); \
+        MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256); \
+        MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512); \
         if (!(expr)) { \
+            swprintf_s(_lineW, 16, L"%d", __LINE__); \
             WriteConsoleW(h, L"Test FAILED: ", 13, &w, NULL); \
             WriteConsoleW(h, funcNameW, (DWORD)wcslen(funcNameW), &w, NULL); \
-            WriteConsoleW(h, L"\n  Assertion failed: " L#expr L"\n\n", (DWORD)(23 + wcslen(L#expr)), &w, NULL); \
+            WriteConsoleW(h, L"\n  Assertion failed: ", 21, &w, NULL); \
+            WriteConsoleW(h, _exprW, (DWORD)wcslen(_exprW), &w, NULL); \
+            WriteConsoleW(h, L"\n  File: ", 9, &w, NULL); \
+            WriteConsoleW(h, fileW, (DWORD)wcslen(fileW), &w, NULL); \
+            WriteConsoleW(h, L", Line: ", 8, &w, NULL); \
+            WriteConsoleW(h, _lineW, (DWORD)wcslen(_lineW), &w, NULL); \
+            WriteConsoleW(h, L"\n\n", 2, &w, NULL); \
 			FAILURE++; \
             /*ExitProcess(1);*/ \
         } else { \

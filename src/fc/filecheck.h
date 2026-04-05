@@ -1,4 +1,4 @@
-﻿/*
+/*
  * PROJECT:     FileCheck Library
  * LICENSE:     GPL2
  * PURPOSE:     Header-only file comparison library for Windows.
@@ -110,9 +110,17 @@ extern "C" {
 
 	// External NTDLL APIs
 	NTSYSAPI RTL_PATH_TYPE NTAPI RtlDetermineDosPathNameType_U(_In_ PCWSTR Path);
+
+#ifndef __deref_opt_out_opt
+#define __deref_opt_out_opt _Deref_opt_out_opt_
+#endif
+#ifndef __reserved
+#define __reserved
+#endif
+
 	NTSYSAPI NTSTATUS NTAPI RtlDosPathNameToNtPathName_U_WithStatus(
-		__in PCWSTR DosFileName,
-		__out PUNICODE_STRING NtFileName,
+		_In_ PCWSTR DosFileName,
+		_Out_ PUNICODE_STRING NtFileName,
 		__deref_opt_out_opt PWSTR* FilePart,
 		__reserved PVOID Reserved
 	);
@@ -225,6 +233,10 @@ extern "C" {
 	/* -------------------- Internal Implementation (Private) -------------------- */
 
 	// All functions and structs below are not part of the public API.
+
+#ifndef ARRAYSIZE
+#define ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 
 	/**
 	 * @brief Conditionally frees a heap pointer. Safe to call with NULL.
@@ -989,7 +1001,7 @@ extern "C" {
 	 * @param ResyncLines       The minimum number of consecutive lines to be considered a stable anchor.
 	 * @param[out] pFilteredLcsA A pointer to receive the new, heap-allocated filtered array of indices for file A. The caller must free this.
 	 * @param[out] pFilteredLcsB A pointer to receive the new, heap-allocated filtered array of indices for file B. The caller must free this.
-	 * @return The length of the new filtered LCS. Returns 0 on memory allocation failure.
+	 * @return The length of the new filtered LCS. Returns SIZE_MAX on memory allocation failure, 0 if all runs were filtered out.
 	 */
 	static size_t
 		_FC_FilterLcsForResync(
@@ -1041,10 +1053,10 @@ extern "C" {
 				if (!_FC_BufferAppendRange(&FilteredA, &LcsA[runStart], runLength) ||
 					!_FC_BufferAppendRange(&FilteredB, &LcsB[runStart], runLength))
 				{
-					// On failure, free what we've allocated and return 0.
+					// On failure, free what we have allocated and return SIZE_MAX to signal error.
 					_FC_BufferFree(&FilteredA);
 					_FC_BufferFree(&FilteredB);
-					return 0;
+					return SIZE_MAX;
 				}
 			}
 
@@ -1212,9 +1224,9 @@ extern "C" {
 			size_t FilteredLcsLength = _FC_FilterLcsForResync(
 				LcsA, LcsB, LcsLength, Config->ResyncLines, &FilteredLcsA, &FilteredLcsB);
 
-			if (LcsLength > 0 && FilteredLcsLength == 0 && (!FilteredLcsA || !FilteredLcsB))
+			if (FilteredLcsLength == SIZE_MAX)
 			{
-				// This indicates a memory allocation failure inside the filter function.
+				// SIZE_MAX signals a memory allocation failure inside the filter function.
 				Result = FC_ERROR_MEMORY;
 				goto cleanup;
 			}
@@ -1259,6 +1271,17 @@ extern "C" {
 	{
 		const char* Ptr = Buffer;
 		const char* End = Buffer + BufferLength;
+
+		// Skip UTF-8 BOM (0xEF 0xBB 0xBF) at the start of the buffer in Unicode mode.
+		if (Config->Mode == FC_MODE_TEXT_UNICODE &&
+			BufferLength >= 3 &&
+			(unsigned char)Ptr[0] == 0xEF &&
+			(unsigned char)Ptr[1] == 0xBB &&
+			(unsigned char)Ptr[2] == 0xBF)
+		{
+			Ptr += 3;
+		}
+
 		// Compute hash config once: clear FC_IGNORE_WS since text is already
 		// WS-normalized before hashing, so single preserved spaces are significant.
 		FC_CONFIG HashConfig = *Config;
@@ -1978,6 +2001,12 @@ extern "C" {
 	//
 	// Main Implementation
 	//
+
+	// Forward declaration: FC_CompareFilesUtf8 calls FC_CompareFilesW which is defined below.
+	FC_RESULT FC_CompareFilesW(
+		_In_z_ const WCHAR* Path1,
+		_In_z_ const WCHAR* Path2,
+		_In_ const FC_CONFIG* Config);
 
 	/**
 	 * @brief Compares two files using UTF-8 encoded paths.
