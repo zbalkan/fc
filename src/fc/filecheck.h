@@ -1016,7 +1016,16 @@ extern "C" {
 			{
 				*pFilteredLcsA = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
 				*pFilteredLcsB = (size_t*)HeapAlloc(GetProcessHeap(), 0, LcsLength * sizeof(size_t));
-				if (!*pFilteredLcsA || !*pFilteredLcsB) return SIZE_MAX; // Allocation failed
+				if (!*pFilteredLcsA || !*pFilteredLcsB)
+				{
+					if (*pFilteredLcsA)
+						HeapFree(GetProcessHeap(), 0, *pFilteredLcsA);
+					if (*pFilteredLcsB)
+						HeapFree(GetProcessHeap(), 0, *pFilteredLcsB);
+					*pFilteredLcsA = NULL;
+					*pFilteredLcsB = NULL;
+					return SIZE_MAX; // Allocation failed
+				}
 				memcpy(*pFilteredLcsA, LcsA, LcsLength * sizeof(size_t));
 				memcpy(*pFilteredLcsB, LcsB, LcsLength * sizeof(size_t));
 			}
