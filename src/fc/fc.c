@@ -549,11 +549,53 @@ FreeWildcardExpansion(_In_opt_ WILDCARD_EXPANSION* Expansion)
 }
 
 /**
+ * @brief Extracts the filename stem (base name without extension) from a path.
+ *
+ * Given a path such as "dir\\a.txt", returns a heap-allocated string "a".
+ * If the filename has no dot the whole filename is returned as the stem.
+ *
+ * @internal
+ * @param Path The file path to examine.
+ * @return A heap-allocated null-terminated stem string, or NULL on allocation
+ *         failure.  The caller must free this with HeapFree.
+ */
+static WCHAR*
+GetFileStem(_In_z_ const WCHAR* Path)
+{
+	// Find the filename portion (after the last path separator).
+	const WCHAR* FileName = Path;
+	for (const WCHAR* p = Path; *p; p++)
+	{
+		if (*p == L'\\' || *p == L'/')
+			FileName = p + 1;
+	}
+
+	// Find the last dot in the filename to locate the extension boundary.
+	const WCHAR* Dot = NULL;
+	for (const WCHAR* p = FileName; *p; p++)
+	{
+		if (*p == L'.')
+			Dot = p;
+	}
+
+	size_t StemLen = (Dot != NULL) ? (size_t)(Dot - FileName) : wcslen(FileName);
+
+	WCHAR* Stem = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (StemLen + 1) * sizeof(WCHAR));
+	if (Stem == NULL)
+		return NULL;
+	CopyMemory(Stem, FileName, StemLen * sizeof(WCHAR));
+	Stem[StemLen] = L'\0';
+	return Stem;
+}
+
+/**
  * @brief Performs file comparisons for wildcard-expanded patterns.
  *
  * Expands both arguments (one or both may contain wildcards) and compares
- * each matched file pair in order.  If one side is a literal path it is
- * paired with every file on the wildcard side.
+ * each matched file pair in order.  If both sides contain wildcards, files
+ * are paired by their base-name stem (title-wild pairing), matching Windows
+ * fc.exe behavior for patterns such as "*.txt" vs "*.bak".  When only one
+ * side is a wildcard the files are paired positionally.
  *
  * @param Pattern1 First file argument (may contain wildcards).
  * @param Pattern2 Second file argument (may contain wildcards).
@@ -613,67 +655,198 @@ WildcardFileCompare(
 		return -1;
 	}
 
-	// Determine the number of pairs to compare.
-	// If counts differ, compare up to the minimum and warn about the rest.
-	size_t PairCount;
-	if (Exp1->Count != Exp2->Count)
+	int OverallResult = 0; // 0 = all identical so far
+
+	if (ContainsWildcard(Pattern1) && ContainsWildcard(Pattern2))
 	{
-		PairCount = Exp1->Count < Exp2->Count ? Exp1->Count : Exp2->Count;
-		WCHAR buf[128];
-		swprintf_s(buf, 128, L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
-			Exp1->Count, Exp2->Count, PairCount);
-		ConPrintW(GetStdHandle(STD_OUTPUT_HANDLE), buf);
+		// Title-wild pairing: both sides are wildcards so match files by their
+		// base-name stem, e.g. "fc *.txt *.bak" pairs a.txt with a.bak.
+		BOOL* Used2 = (BOOL*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+			Exp2->Count * sizeof(BOOL));
+		if (Used2 == NULL)
+		{
+			FreeWildcardExpansion(Exp1);
+			FreeWildcardExpansion(Exp2);
+			ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+				L"Error: memory allocation failure during wildcard pairing.\n");
+			return 2;
+		}
+
+		// Precompute stems for Exp2 once to avoid O(n²) heap allocations.
+		WCHAR** Stems2 = (WCHAR**)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
+			Exp2->Count * sizeof(WCHAR*));
+		if (Stems2 == NULL)
+		{
+			HeapFree(GetProcessHeap(), 0, Used2);
+			FreeWildcardExpansion(Exp1);
+			FreeWildcardExpansion(Exp2);
+			ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+				L"Error: memory allocation failure during wildcard pairing.\n");
+			return 2;
+		}
+		for (size_t k = 0; k < Exp2->Count; k++)
+		{
+			Stems2[k] = GetFileStem(Exp2->Paths[k]);
+			if (Stems2[k] == NULL)
+			{
+				ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+					L"Error: memory allocation failure extracting file stem.\n");
+				// Free stems allocated so far.
+				for (size_t m = 0; m < k; m++)
+					HeapFree(GetProcessHeap(), 0, Stems2[m]);
+				HeapFree(GetProcessHeap(), 0, Stems2);
+				HeapFree(GetProcessHeap(), 0, Used2);
+				FreeWildcardExpansion(Exp1);
+				FreeWildcardExpansion(Exp2);
+				return 2;
+			}
+		}
+
+		for (size_t i = 0; i < Exp1->Count; i++)
+		{
+			WCHAR* Stem1 = GetFileStem(Exp1->Paths[i]);
+			if (Stem1 == NULL)
+			{
+				ConPrintW(GetStdHandle(STD_ERROR_HANDLE),
+					L"Error: memory allocation failure extracting file stem.\n");
+				for (size_t m = 0; m < Exp2->Count; m++)
+					HeapFree(GetProcessHeap(), 0, Stems2[m]);
+				HeapFree(GetProcessHeap(), 0, Stems2);
+				HeapFree(GetProcessHeap(), 0, Used2);
+				FreeWildcardExpansion(Exp1);
+				FreeWildcardExpansion(Exp2);
+				return 2;
+			}
+
+			// Find the first unused Exp2 entry whose stem matches Stem1.
+			size_t MatchIndex = (size_t)-1;
+			for (size_t j = 0; j < Exp2->Count; j++)
+			{
+				if (Used2[j])
+					continue;
+				if (_wcsicmp(Stem1, Stems2[j]) == 0)
+				{
+					MatchIndex = j;
+					break;
+				}
+			}
+
+			HeapFree(GetProcessHeap(), 0, Stem1);
+
+			if (MatchIndex == (size_t)-1)
+				continue; // No stem match in Exp2; skip (matches Windows behavior).
+
+			Used2[MatchIndex] = TRUE;
+
+			const WCHAR* File1 = Exp1->Paths[i];
+			const WCHAR* File2 = Exp2->Paths[MatchIndex];
+
+			HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+			ConPrintW(hOut, L"Comparing files ");
+			ConPrintW(hOut, File1);
+			ConPrintW(hOut, L" and ");
+			ConPrintW(hOut, File2);
+			ConPrintW(hOut, L"\n\n");
+
+			FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
+
+			switch (Result)
+			{
+			case FC_OK:
+				ConPrintW(hOut, L"FC: no differences encountered\n");
+				break;
+			case FC_DIFFERENT:
+				if (OverallResult < 1)
+					OverallResult = 1;
+				break;
+			case FC_ERROR_IO:
+			case FC_ERROR_MEMORY:
+			{
+				HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+				ConPrintW(hErr, L"Error during comparison of ");
+				ConPrintW(hErr, File1);
+				ConPrintW(hErr, L" and ");
+				ConPrintW(hErr, File2);
+				WCHAR errBuf[32];
+				swprintf_s(errBuf, 32, L": %d\n", Result);
+				ConPrintW(hErr, errBuf);
+				if (OverallResult < 2)
+					OverallResult = 2;
+				break;
+			}
+			default:
+				if (OverallResult == 0)
+					OverallResult = -1;
+				break;
+			}
+		}
+
+		for (size_t m = 0; m < Exp2->Count; m++)
+			HeapFree(GetProcessHeap(), 0, Stems2[m]);
+		HeapFree(GetProcessHeap(), 0, Stems2);
+		HeapFree(GetProcessHeap(), 0, Used2);
 	}
 	else
 	{
-		PairCount = Exp1->Count;
-	}
-
-	int OverallResult = 0; // 0 = all identical so far
-
-	for (size_t i = 0; i < PairCount; i++)
-	{
-		const WCHAR* File1 = Exp1->Paths[i];
-		const WCHAR* File2 = Exp2->Paths[i];
-
-		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		ConPrintW(hOut, L"Comparing files ");
-		ConPrintW(hOut, File1);
-		ConPrintW(hOut, L" and ");
-		ConPrintW(hOut, File2);
-		ConPrintW(hOut, L"\n\n");
-
-		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
-
-		switch (Result)
+		// Positional pairing: match files by their ordinal position in the expansion.
+		size_t PairCount;
+		if (Exp1->Count != Exp2->Count)
 		{
-		case FC_OK:
-			ConPrintW(hOut, L"FC: no differences encountered\n");
-			// Identical – keep OverallResult as-is (0 or already 1).
-			break;
-		case FC_DIFFERENT:
-			if (OverallResult < 1)
-				OverallResult = 1;
-			break;
-		case FC_ERROR_IO:
-		case FC_ERROR_MEMORY:
-		{
-			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
-			ConPrintW(hErr, L"Error during comparison of ");
-			ConPrintW(hErr, File1);
-			ConPrintW(hErr, L" and ");
-			ConPrintW(hErr, File2);
-			WCHAR errBuf[32];
-			swprintf_s(errBuf, 32, L": %d\n", Result);
-			ConPrintW(hErr, errBuf);
-			if (OverallResult < 2)
-				OverallResult = 2;
-			break;
+			PairCount = Exp1->Count < Exp2->Count ? Exp1->Count : Exp2->Count;
+			WCHAR buf[128];
+			swprintf_s(buf, 128, L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
+				Exp1->Count, Exp2->Count, PairCount);
+			ConPrintW(GetStdHandle(STD_OUTPUT_HANDLE), buf);
 		}
-		default:
-			if (OverallResult == 0)
-				OverallResult = -1;
-			break;
+		else
+		{
+			PairCount = Exp1->Count;
+		}
+
+		for (size_t i = 0; i < PairCount; i++)
+		{
+			const WCHAR* File1 = Exp1->Paths[i];
+			const WCHAR* File2 = Exp2->Paths[i];
+
+			HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+			ConPrintW(hOut, L"Comparing files ");
+			ConPrintW(hOut, File1);
+			ConPrintW(hOut, L" and ");
+			ConPrintW(hOut, File2);
+			ConPrintW(hOut, L"\n\n");
+
+			FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
+
+			switch (Result)
+			{
+			case FC_OK:
+				ConPrintW(hOut, L"FC: no differences encountered\n");
+				// Identical – keep OverallResult as-is (0 or already 1).
+				break;
+			case FC_DIFFERENT:
+				if (OverallResult < 1)
+					OverallResult = 1;
+				break;
+			case FC_ERROR_IO:
+			case FC_ERROR_MEMORY:
+			{
+				HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
+				ConPrintW(hErr, L"Error during comparison of ");
+				ConPrintW(hErr, File1);
+				ConPrintW(hErr, L" and ");
+				ConPrintW(hErr, File2);
+				WCHAR errBuf[32];
+				swprintf_s(errBuf, 32, L": %d\n", Result);
+				ConPrintW(hErr, errBuf);
+				if (OverallResult < 2)
+					OverallResult = 2;
+				break;
+			}
+			default:
+				if (OverallResult == 0)
+					OverallResult = -1;
+				break;
+			}
 		}
 	}
 
@@ -712,49 +885,54 @@ wmain(
 	Config.ResyncLines = 2;
 	Config.BufferLines = 100;
 
-	int ArgIndex = 1;
-	for (; ArgIndex < argc - 2; ++ArgIndex)
-	{
-		WCHAR* Option = argv[ArgIndex];
+	// Options may appear anywhere in the argument list — before, between, or
+	// after the two file paths — matching Windows fc.exe behaviour.
+	// Non-option arguments are collected in order as the two file paths.
+	const WCHAR* FileArgs[2] = { NULL, NULL };
+	int FileCount = 0;
 
-		if (Option[0] == L'/' || Option[0] == L'-')
+	for (int i = 1; i < argc; ++i)
+	{
+		WCHAR* Arg = argv[i];
+
+		if (Arg[0] == L'/' || Arg[0] == L'-')
 		{
 			// Handle /? — print usage and exit.
-			if (Option[1] == L'?')
+			if (Arg[1] == L'?')
 			{
 				PrintUsage();
 				return 0;
 			}
 			// Silently accept /OFF and /OFFLINE (offline-file flags, no-op on local files).
-			else if (_wcsicmp(Option + 1, L"OFF") == 0 || _wcsicmp(Option + 1, L"OFFLINE") == 0)
+			else if (_wcsicmp(Arg + 1, L"OFF") == 0 || _wcsicmp(Arg + 1, L"OFFLINE") == 0)
 			{
 				// No-op: accepted for compatibility with Windows fc.exe.
 			}
 			// Check for numeric resync line option (e.g., /20)
-			else if (iswdigit(Option[1]))
+			else if (iswdigit(Arg[1]))
 			{
-				if (!ParseNumericOption(Option + 1, &Config.ResyncLines, 1, UINT_MAX))
+				if (!ParseNumericOption(Arg + 1, &Config.ResyncLines, 1, UINT_MAX))
 					return -1;
 			}
-			// Check for buffer line option (e.g., /LB100)
-			else if (wcsncmp(Option + 1, L"LB", 2) == 0 && iswdigit(Option[3]))
+			// Check for buffer line option (e.g., /LB100 or /lb100)
+			else if (_wcsnicmp(Arg + 1, L"LB", 2) == 0 && iswdigit(Arg[3]))
 			{
-				if (!ParseNumericOption(Option + 3, &Config.BufferLines, 1, UINT_MAX))
+				if (!ParseNumericOption(Arg + 3, &Config.BufferLines, 1, UINT_MAX))
 					return -1;
 			}
 			else
 			{
-				WCHAR OptionChar = towupper(Option[1]);
+				WCHAR OptionChar = towupper(Arg[1]);
 				BOOL Handled = FALSE;
 
-				for (int i = 0; g_OptionMap[i].OptionChar != 0; ++i)
+				for (int j = 0; g_OptionMap[j].OptionChar != 0; ++j)
 				{
-					if (OptionChar == g_OptionMap[i].OptionChar)
+					if (OptionChar == g_OptionMap[j].OptionChar)
 					{
-						if (g_OptionMap[i].FlagToSet)
-							Config.Flags |= g_OptionMap[i].FlagToSet;
-						if (g_OptionMap[i].ModeToSet)
-							Config.Mode = g_OptionMap[i].ModeToSet;
+						if (g_OptionMap[j].FlagToSet)
+							Config.Flags |= g_OptionMap[j].FlagToSet;
+						if (g_OptionMap[j].ModeToSet)
+							Config.Mode = g_OptionMap[j].ModeToSet;
 						Handled = TRUE;
 						break;
 					}
@@ -764,7 +942,7 @@ wmain(
 				{
 					HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
 					WCHAR buf[256];
-					swprintf_s(buf, 256, L"Invalid option: %s\n", Option);
+					swprintf_s(buf, 256, L"Invalid option: %s\n", Arg);
 					ConPrintW(hErr, buf);
 					return -1;
 				}
@@ -772,12 +950,17 @@ wmain(
 		}
 		else
 		{
-			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
-			WCHAR buf[256];
-			swprintf_s(buf, 256, L"Invalid argument: %s\n", Option);
-			ConPrintW(hErr, buf);
-			return -1;
+			// Non-option argument: collect as a file path.
+			if (FileCount < 2)
+				FileArgs[FileCount] = Arg;
+			FileCount++;
 		}
+	}
+
+	if (FileCount != 2)
+	{
+		PrintUsage();
+		return -1;
 	}
 
 	if (Config.Mode == FC_MODE_BINARY)
@@ -792,8 +975,8 @@ wmain(
 		Config.UserData = &TextUserData;
 	}
 
-	const WCHAR* File1 = argv[argc - 2];
-	const WCHAR* File2 = argv[argc - 1];
+	const WCHAR* File1 = FileArgs[0];
+	const WCHAR* File2 = FileArgs[1];
 
 	if (ContainsWildcard(File1) || ContainsWildcard(File2))
 	{
