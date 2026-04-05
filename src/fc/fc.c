@@ -13,15 +13,38 @@
 #include <strsafe.h> // For StringCchLengthW
 
 /**
- * @brief Writes a wide-character string to a console handle.
+ * @brief Writes a wide-character string to an output handle.
+ *
+ * When the handle is a real console, WriteConsoleW is used directly.
+ * When the handle is redirected or piped, the string is converted to UTF-8
+ * and written with WriteFile so that output is not silently lost.
+ *
  * @internal
- * @param hConsole The console handle (e.g., STD_OUTPUT_HANDLE or STD_ERROR_HANDLE).
- * @param msg      The null-terminated wide string to write.
+ * @param hOut The output handle (e.g., STD_OUTPUT_HANDLE or STD_ERROR_HANDLE).
+ * @param msg  The null-terminated wide string to write.
  */
 static void
-ConPrintW(_In_ HANDLE hConsole, _In_z_ const WCHAR* msg)
+ConPrintW(_In_ HANDLE hOut, _In_z_ const WCHAR* msg)
 {
-	WriteConsoleW(hConsole, msg, (DWORD)wcslen(msg), NULL, NULL);
+	DWORD Mode;
+	if (GetConsoleMode(hOut, &Mode))
+	{
+		WriteConsoleW(hOut, msg, (DWORD)wcslen(msg), NULL, NULL);
+	}
+	else
+	{
+		int cbNeeded = WideCharToMultiByte(CP_UTF8, 0, msg, -1, NULL, 0, NULL, NULL);
+		if (cbNeeded > 1)
+		{
+			char* buf = (char*)HeapAlloc(GetProcessHeap(), 0, (size_t)cbNeeded);
+			if (buf != NULL)
+			{
+				WideCharToMultiByte(CP_UTF8, 0, msg, -1, buf, cbNeeded, NULL, NULL);
+				WriteFile(hOut, buf, (DWORD)(cbNeeded - 1), NULL, NULL);
+				HeapFree(GetProcessHeap(), 0, buf);
+			}
+		}
+	}
 }
 
  /**
@@ -77,11 +100,11 @@ PrintLines(
 				if (wText != NULL)
 				{
 					MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, wText, wLen);
-					WriteConsoleW(hOut, wText, (DWORD)(wLen - 1), NULL, NULL);
+					ConPrintW(hOut, wText);
 					HeapFree(GetProcessHeap(), 0, wText);
 				}
 			}
-			WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+			ConPrintW(hOut, L"\n");
 		}
 	}
 }
@@ -130,23 +153,23 @@ TextDiffCallback(
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 
 		// Print first file block
-		WriteConsoleW(hOut, L"***** ", 6, NULL, NULL);
+		ConPrintW(hOut, L"***** ");
 		ConPrintW(hOut, Context->Path1);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
 			PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
 
 		// Print second file block
-		WriteConsoleW(hOut, L"***** ", 6, NULL, NULL);
+		ConPrintW(hOut, L"***** ");
 		ConPrintW(hOut, Context->Path2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
 			PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
 
 		// Print closing marker
-		WriteConsoleW(hOut, L"*****\n", 6, NULL, NULL);
+		ConPrintW(hOut, L"*****\n");
 	}
 }
 
@@ -176,11 +199,11 @@ BinaryDiffCallback(
 		// Always report as "[longer_file] longer than [shorter_file]", matching Windows fc.exe.
 		const WCHAR* LongerPath  = (Block->StartA > Block->StartB) ? Context->Path1 : Context->Path2;
 		const WCHAR* ShorterPath = (Block->StartA > Block->StartB) ? Context->Path2 : Context->Path1;
-		WriteConsoleW(hOut, L"FC: ", 4, NULL, NULL);
+		ConPrintW(hOut, L"FC: ");
 		ConPrintW(hOut, LongerPath);
-		WriteConsoleW(hOut, L" longer than ", 13, NULL, NULL);
+		ConPrintW(hOut, L" longer than ");
 		ConPrintW(hOut, ShorterPath);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 	}
 	else if (Block->Type == FC_DIFF_TYPE_CHANGE)
 	{
@@ -479,11 +502,11 @@ WildcardFileCompare(
 	if (Exp1->Count == 0 && Exp2->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, L"FC: no files found for ");
 		ConPrintW(hOut, Pattern1);
-		WriteConsoleW(hOut, L" or ", 4, NULL, NULL);
+		ConPrintW(hOut, L" or ");
 		ConPrintW(hOut, Pattern2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -492,9 +515,9 @@ WildcardFileCompare(
 	if (Exp1->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, L"FC: no files found for ");
 		ConPrintW(hOut, Pattern1);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -503,9 +526,9 @@ WildcardFileCompare(
 	if (Exp2->Count == 0)
 	{
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"FC: no files found for ", 23, NULL, NULL);
+		ConPrintW(hOut, L"FC: no files found for ");
 		ConPrintW(hOut, Pattern2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);
 		return -1;
@@ -535,11 +558,11 @@ WildcardFileCompare(
 		const WCHAR* File2 = Exp2->Paths[i];
 
 		HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-		WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+		ConPrintW(hOut, L"Comparing files ");
 		ConPrintW(hOut, File1);
-		WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+		ConPrintW(hOut, L" and ");
 		ConPrintW(hOut, File2);
-		WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+		ConPrintW(hOut, L"\n");
 
 		FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
 
@@ -556,9 +579,9 @@ WildcardFileCompare(
 		case FC_ERROR_MEMORY:
 		{
 			HANDLE hErr = GetStdHandle(STD_ERROR_HANDLE);
-			WriteConsoleW(hErr, L"Error during comparison of ", 27, NULL, NULL);
+			ConPrintW(hErr, L"Error during comparison of ");
 			ConPrintW(hErr, File1);
-			WriteConsoleW(hErr, L" and ", 5, NULL, NULL);
+			ConPrintW(hErr, L" and ");
 			ConPrintW(hErr, File2);
 			WCHAR errBuf[32];
 			swprintf_s(errBuf, 32, L": %d\n", Result);
@@ -680,11 +703,11 @@ wmain(
 	}
 
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-	WriteConsoleW(hOut, L"Comparing files ", 16, NULL, NULL);
+	ConPrintW(hOut, L"Comparing files ");
 	ConPrintW(hOut, File1);
-	WriteConsoleW(hOut, L" and ", 5, NULL, NULL);
+	ConPrintW(hOut, L" and ");
 	ConPrintW(hOut, File2);
-	WriteConsoleW(hOut, L"\n", 1, NULL, NULL);
+	ConPrintW(hOut, L"\n");
 
 	FC_RESULT Result = FC_CompareFilesW(File1, File2, &Config);
 
