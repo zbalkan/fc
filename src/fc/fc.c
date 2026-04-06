@@ -898,10 +898,18 @@ WildcardFileCompare(
 		if (Exp1->Count != Exp2->Count)
 		{
 			PairCount = Exp1->Count < Exp2->Count ? Exp1->Count : Exp2->Count;
+			if (OverallResult < 1)
+				OverallResult = 1; // Count mismatch means overall comparison is different.
 			WCHAR buf[128];
 			swprintf_s(buf, 128, L"FC: file count mismatch (%zu vs %zu); comparing first %zu pair(s).\n",
 				Exp1->Count, Exp2->Count, PairCount);
 			ConPrintW(GetStdHandle(STD_OUTPUT_HANDLE), buf);
+			WCHAR unmatchedBuf[160];
+			const size_t LeftUnmatched = (Exp1->Count > PairCount) ? (Exp1->Count - PairCount) : 0;
+			const size_t RightUnmatched = (Exp2->Count > PairCount) ? (Exp2->Count - PairCount) : 0;
+			swprintf_s(unmatchedBuf, 160, L"FC: unmatched file counts (left: %zu, right: %zu).\n",
+				LeftUnmatched, RightUnmatched);
+			ConPrintW(GetStdHandle(STD_OUTPUT_HANDLE), unmatchedBuf);
 		}
 		else
 		{

@@ -1770,6 +1770,44 @@ static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") == NULL);
 }
 
+static void Test_Cli_PositionalWildcardCountMismatchMarksDifferent(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_positional_left")))
+		Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR leftB[MAX_LONG_PATH];
+	WCHAR rightSingle[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"alpha.txt", leftA);
+	ConcatPath(dirLeft, L"beta.txt", leftB);
+	ConcatPath(baseDir, L"alpha_single.txt", rightSingle);
+
+	// Either positional pair is equal regardless of wildcard enumeration order;
+	// one left file still remains unmatched because the counts differ.
+	WRITE_STR_FILE(leftA, "same content\n");
+	WRITE_STR_FILE(leftB, "same content\n");
+	WRITE_STR_FILE(rightSingle, "same content\n");
+
+	WCHAR patternLeft[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(patternLeft, MAX_LONG_PATH, dirLeft, L"*.txt")))
+		Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_positional_mismatch_output.txt")))
+		Throw(L"Combine fail", NULL);
+
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(patternLeft, rightSingle, outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode != 0);
+	ASSERT_TRUE(strstr(output, "FC: file count mismatch (2 vs 1); comparing first 1 pair(s).") != NULL);
+	ASSERT_TRUE(strstr(output, "FC: unmatched file counts (left: 1, right: 0).") != NULL);
+	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
+	ASSERT_TRUE(strstr(output, "FC: no differences encountered") != NULL);
+}
+
 static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
 {
 	WCHAR dirLeft[MAX_LONG_PATH];
@@ -1917,6 +1955,7 @@ int wmain(void)
 	Test_Cli_WildcardLongPathFidelity(testDir);
 	Test_Cli_DualWildcardDisjointStems(testDir);
 	Test_Cli_DualWildcardPartialStemOverlap(testDir);
+	Test_Cli_PositionalWildcardCountMismatchMarksDifferent(testDir);
 	Test_Cli_WildcardAllocFailureOnPathDuplication(testDir);
 	Test_Cli_WildcardAllocFailureOnGrowth(testDir);
 
