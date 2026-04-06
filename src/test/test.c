@@ -4,7 +4,6 @@
 #include <strsafe.h>     // StringCchLengthA/W, StringCchCopyW, StringCchCatW
 #include <pathcch.h>     // PathCchCombine, PathCchAddBackslash
 #include <string.h>      // strstr
-#include <stdlib.h>      // _wsystem
 #include "../fc/filecheck.h"   // FC_CONFIG, FC_RESULT, FC_OK, FC_DIFFERENT, FC_MODE_*, FC_IGNORE_*,
 // FileCheckCompareFilesUtf8()
 
@@ -1493,6 +1492,91 @@ static BOOL ReadFileToBuffer(
 	return TRUE;
 }
 
+static BOOL ResolveFcExePath(_Out_writes_z_(MAX_LONG_PATH) WCHAR* fcPath)
+{
+	if (!GetModuleFileNameW(NULL, fcPath, MAX_LONG_PATH))
+		return FALSE;
+
+	WCHAR* lastSlash = wcsrchr(fcPath, L'\\');
+	if (lastSlash == NULL)
+		return FALSE;
+	lastSlash[1] = L'\0';
+	if (FAILED(StringCchCatW(fcPath, MAX_LONG_PATH, L"fc.exe")))
+		return FALSE;
+	if (GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES)
+		return TRUE;
+
+	WCHAR cwd[MAX_LONG_PATH];
+	if (!GetCurrentDirectoryW(MAX_LONG_PATH, cwd))
+		return FALSE;
+
+	if (FAILED(PathCchCombine(fcPath, MAX_LONG_PATH, cwd, L"src\\x64\\Release\\fc.exe")))
+		return FALSE;
+	if (GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES)
+		return TRUE;
+
+	if (FAILED(PathCchCombine(fcPath, MAX_LONG_PATH, cwd, L"x64\\Release\\fc.exe")))
+		return FALSE;
+	return GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES;
+}
+
+static BOOL RunFcToOutputFile(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	WCHAR fcPath[MAX_LONG_PATH];
+	if (!ResolveFcExePath(fcPath))
+		return FALSE;
+
+	WCHAR cmdLine[4096];
+	if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+		L"\"%s\" \"%s\" \"%s\"",
+		fcPath, pattern1, pattern2)))
+	{
+		return FALSE;
+	}
+
+	SECURITY_ATTRIBUTES sa = { 0 };
+	sa.nLength = sizeof(sa);
+	sa.bInheritHandle = TRUE;
+	HANDLE outFile = CreateFileW(outputPath, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (outFile == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	STARTUPINFOW si = { 0 };
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	si.hStdOutput = outFile;
+	si.hStdError = outFile;
+
+	PROCESS_INFORMATION pi = { 0 };
+	BOOL ok = CreateProcessW(
+		fcPath,
+		cmdLine,
+		NULL,
+		NULL,
+		TRUE,
+		0,
+		NULL,
+		NULL,
+		&si,
+		&pi);
+
+	CloseHandle(outFile);
+	if (!ok)
+		return FALSE;
+
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	ok = GetExitCodeProcess(pi.hProcess, exitCode);
+
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return ok;
+}
+
 static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
 {
 	WCHAR dirLeft[MAX_LONG_PATH];
@@ -1519,28 +1603,13 @@ static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
 	WCHAR pattern1[MAX_LONG_PATH];
 	WCHAR pattern2[MAX_LONG_PATH];
 	WCHAR outputPath[MAX_LONG_PATH];
-	WCHAR modulePath[MAX_LONG_PATH];
-	WCHAR command[4096];
 
 	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
 	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_disjoint_output.txt"))) Throw(L"Combine fail", NULL);
-	if (!GetModuleFileNameW(NULL, modulePath, MAX_LONG_PATH)) Throw(L"Module path fail", NULL);
-	WCHAR* lastSlash = wcsrchr(modulePath, L'\\');
-	if (lastSlash == NULL) Throw(L"Module path fail", NULL);
-	lastSlash[1] = L'\0';
-	if (FAILED(StringCchCatW(modulePath, MAX_LONG_PATH, L"fc.exe"))) Throw(L"Combine fail", NULL);
-
-	if (FAILED(StringCchPrintfW(command, ARRAYSIZE(command),
-		L"\"%s\" \"%s\" \"%s\" > \"%s\" 2>&1",
-		modulePath, pattern1, pattern2, outputPath)))
-	{
-		Throw(L"Command build fail", NULL);
-	}
-
-	int exitCode = _wsystem(command);
+	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(exitCode != -1);
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode != 0);
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
@@ -1573,28 +1642,13 @@ static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
 	WCHAR pattern1[MAX_LONG_PATH];
 	WCHAR pattern2[MAX_LONG_PATH];
 	WCHAR outputPath[MAX_LONG_PATH];
-	WCHAR modulePath[MAX_LONG_PATH];
-	WCHAR command[4096];
 
 	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
 	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_partial_output.txt"))) Throw(L"Combine fail", NULL);
-	if (!GetModuleFileNameW(NULL, modulePath, MAX_LONG_PATH)) Throw(L"Module path fail", NULL);
-	WCHAR* lastSlash = wcsrchr(modulePath, L'\\');
-	if (lastSlash == NULL) Throw(L"Module path fail", NULL);
-	lastSlash[1] = L'\0';
-	if (FAILED(StringCchCatW(modulePath, MAX_LONG_PATH, L"fc.exe"))) Throw(L"Combine fail", NULL);
-
-	if (FAILED(StringCchPrintfW(command, ARRAYSIZE(command),
-		L"\"%s\" \"%s\" \"%s\" > \"%s\" 2>&1",
-		modulePath, pattern1, pattern2, outputPath)))
-	{
-		Throw(L"Command build fail", NULL);
-	}
-
-	int exitCode = _wsystem(command);
+	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(exitCode != -1);
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 0);
 	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
