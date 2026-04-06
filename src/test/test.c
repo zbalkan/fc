@@ -1567,7 +1567,7 @@ static BOOL ResolveFcExePath(_Out_writes_z_(MAX_LONG_PATH) WCHAR* fcPath)
 	return GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES;
 }
 
-static BOOL RunFcToOutputFile(
+static BOOL RunFcToOutputFileWithOptions(
 	_In_z_ const WCHAR* pattern1,
 	_In_z_ const WCHAR* pattern2,
 	_In_opt_z_ const WCHAR* options,
@@ -1625,13 +1625,22 @@ static BOOL RunFcToOutputFile(
 	return ok;
 }
 
+static BOOL RunFcToOutputFile(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	return RunFcToOutputFileWithOptions(pattern1, pattern2, NULL, outputPath, exitCode);
+}
+
 static BOOL RunFcToOutputFileNoOptions(
 	_In_z_ const WCHAR* pattern1,
 	_In_z_ const WCHAR* pattern2,
 	_In_z_ const WCHAR* outputPath,
 	_Out_ DWORD* exitCode)
 {
-	return RunFcToOutputFile(pattern1, pattern2, NULL, outputPath, exitCode);
+	return RunFcToOutputFile(pattern1, pattern2, outputPath, exitCode);
 }
 
 static void BuildLongSubdirName(_In_ int index, _Out_writes_z_(32) WCHAR* out)
@@ -1914,7 +1923,7 @@ static void Test_Cli_LineOutput_Utf8Multibyte_NU(const WCHAR* baseDir)
 
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(file1, file2, L"/N /U ", outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /U ", outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
 	ASSERT_TRUE(strstr(output, "    1:  caf\xc3\xa9 \xe2\x98\x95") != NULL);
@@ -2026,7 +2035,7 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(file1, file2, L"/N /L ", outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /L ", outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
 
