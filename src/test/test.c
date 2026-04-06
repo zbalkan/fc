@@ -1687,7 +1687,8 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 		// long-path test data flowed through CLI output.
 		ASSERT_TRUE(exitCode != 0);
 		ASSERT_TRUE(output[0] != '\0');
-		ASSERT_TRUE(strstr(output, "seg_11_abcdefghijklmnop") != NULL);
+		ASSERT_TRUE(strstr(output, "seg_11_abcdefghijklmnop\\left_side\\") != NULL);
+		ASSERT_TRUE(strstr(output, "seg_11_abcdefghijklmnop\\right_side\\") != NULL);
 	}
 }
 
