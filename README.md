@@ -241,6 +241,33 @@ The test executable creates temporary files, reports the status of each test cas
 
 CI runs automatically on every push and pull request using GitHub Actions (MSVC / x64, Release configuration). See `.github/workflows/test.yml` for the workflow definition.
 
+### Compile-Time Flags & Environment Variables
+
+The following flags and variables control optional or test-only behavior. They are **not** needed for normal builds or use.
+
+#### `FC_TESTING` (compile-time preprocessor flag)
+
+Enables fault-injection hooks used by the test suite to simulate allocation failures during wildcard expansion.
+
+- **Default:** off (not defined).
+- **How to enable:** Pass the MSBuild property `EnableTestFaultInjection=true` when building, e.g.:
+  ```sh
+  msbuild src\fc.sln /p:Configuration=Debug /p:Platform=x64 /p:EnableTestFaultInjection=true
+  ```
+- **Restriction:** A `#error` in `fc.c` prevents `FC_TESTING` from being combined with `NDEBUG` (i.e., it must not appear in Release builds).
+- **Effect:** Activates `ShouldForceWildcardAllocFailure()` in `fc.c`, which reads `FC_WILDCARD_FAIL_STEP` (see below) to decide whether to simulate a memory-allocation failure at the next wildcard expansion step.
+
+#### `FC_WILDCARD_FAIL_STEP` (environment variable)
+
+Selects which wildcard-expansion allocation step to fail the *next* time it is reached. Only read when the binary was compiled with `FC_TESTING`.
+
+| Value  | Step forced to fail |
+|--------|---------------------|
+| `dup`  | `WILDCARD_ALLOC_STEP_DUP_PATH` — path-string duplication |
+| `grow` | `WILDCARD_ALLOC_STEP_GROW_PATHS` — growing the paths array |
+
+Each failure fires exactly once; after triggering, the flag resets so subsequent calls succeed normally.
+
 ### Contributing
 
 *   All code is written in pure C using Windows-native APIs (`HeapAlloc`/`HeapFree`, `WriteConsoleW`, `StringCchLengthW`, etc.) — avoid standard C library equivalents where a Windows API alternative exists.
