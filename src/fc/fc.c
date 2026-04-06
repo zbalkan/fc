@@ -387,6 +387,9 @@ typedef struct {
 	size_t  Capacity;  /**< Allocated capacity of Paths. */
 } WILDCARD_EXPANSION;
 
+static void
+FreeWildcardExpansion(_In_opt_ WILDCARD_EXPANSION* Expansion);
+
 /**
  * @brief Builds a full path by combining a directory prefix with a file name.
  *
@@ -396,13 +399,12 @@ typedef struct {
  *
  * @param Pattern  The original wildcard pattern.
  * @param FileName The file name returned by FindFirstFileW / FindNextFileW.
- * @param OutBuf   Buffer that receives the combined path (MAX_PATH wide chars).
+ * @return A heap-allocated combined path string, or NULL on allocation failure.
  */
-static void
-BuildFullPath(
+static WCHAR*
+BuildFullPathAlloc(
 	_In_z_  const WCHAR* Pattern,
-	_In_z_  const WCHAR* FileName,
-	_Out_writes_z_(MAX_PATH) WCHAR* OutBuf)
+	_In_z_  const WCHAR* FileName)
 {
 	// Find the last path separator in the pattern.
 	const WCHAR* LastSep = NULL;
@@ -412,35 +414,21 @@ BuildFullPath(
 			LastSep = p;
 	}
 
-	if (LastSep != NULL)
-	{
-		// Copy the directory prefix (including the separator).
-		size_t PrefixLen = (size_t)(LastSep - Pattern) + 1;
-		if (PrefixLen >= MAX_PATH)
-			PrefixLen = MAX_PATH - 1;
-		CopyMemory(OutBuf, Pattern, PrefixLen * sizeof(WCHAR));
-		OutBuf[PrefixLen] = L'\0';
+	const size_t PrefixLen = (LastSep != NULL) ? (size_t)(LastSep - Pattern) + 1 : 0;
+	const size_t NameLen = wcslen(FileName);
+	const size_t TotalLen = PrefixLen + NameLen;
+	if (TotalLen < PrefixLen || TotalLen > (SIZE_MAX / sizeof(WCHAR)) - 1)
+		return NULL;
 
-		// Append the file name, truncating if necessary.
-		size_t NameLen;
-		if (FAILED(StringCchLengthW(FileName, MAX_PATH, &NameLen)))
-			NameLen = 0;
-		if (PrefixLen + NameLen >= MAX_PATH)
-			NameLen = MAX_PATH - PrefixLen - 1;
-		CopyMemory(OutBuf + PrefixLen, FileName, NameLen * sizeof(WCHAR));
-		OutBuf[PrefixLen + NameLen] = L'\0';
-	}
-	else
-	{
-		// No directory component – use the file name directly.
-		size_t NameLen;
-		if (FAILED(StringCchLengthW(FileName, MAX_PATH, &NameLen)))
-			NameLen = 0;
-		if (NameLen >= MAX_PATH)
-			NameLen = MAX_PATH - 1;
-		CopyMemory(OutBuf, FileName, NameLen * sizeof(WCHAR));
-		OutBuf[NameLen] = L'\0';
-	}
+	WCHAR* FullPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (TotalLen + 1) * sizeof(WCHAR));
+	if (FullPath == NULL)
+		return NULL;
+
+	if (PrefixLen > 0)
+		CopyMemory(FullPath, Pattern, PrefixLen * sizeof(WCHAR));
+	CopyMemory(FullPath + PrefixLen, FileName, NameLen * sizeof(WCHAR));
+	FullPath[TotalLen] = L'\0';
+	return FullPath;
 }
 
 /**
@@ -487,41 +475,41 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 			continue;
 
 		// Build the full path from the pattern directory and the found name.
-		WCHAR FullPath[MAX_PATH];
-		BuildFullPath(Pattern, FindData.cFileName, FullPath);
+		WCHAR* FullPath = BuildFullPathAlloc(Pattern, FindData.cFileName);
+		if (FullPath == NULL)
+		{
+			FindClose(hFind);
+			FreeWildcardExpansion(Exp);
+			return NULL;
+		}
 
 		// Grow the array if needed.
 		if (Exp->Count >= Exp->Capacity)
 		{
+			if (Exp->Capacity > (SIZE_MAX / 2) ||
+				(Exp->Capacity * 2) > (SIZE_MAX / sizeof(WCHAR*)))
+			{
+				HeapFree(GetProcessHeap(), 0, FullPath);
+				FindClose(hFind);
+				FreeWildcardExpansion(Exp);
+				return NULL;
+			}
 			size_t NewCapacity = Exp->Capacity * 2;
 			WCHAR** NewPaths = (WCHAR**)HeapReAlloc(
 				GetProcessHeap(), 0,
 				Exp->Paths, NewCapacity * sizeof(WCHAR*));
 			if (NewPaths == NULL)
 			{
+				HeapFree(GetProcessHeap(), 0, FullPath);
 				FindClose(hFind);
-				// Partial results are still returned; caller will deal with them.
-				return Exp;
+				FreeWildcardExpansion(Exp);
+				return NULL;
 			}
 			Exp->Paths = NewPaths;
 			Exp->Capacity = NewCapacity;
 		}
 
-		// Duplicate the full path onto the heap.
-		size_t PathLen;
-		if (FAILED(StringCchLengthW(FullPath, MAX_PATH, &PathLen)))
-			continue;
-
-		WCHAR* Dup = (WCHAR*)HeapAlloc(
-			GetProcessHeap(), 0, (PathLen + 1) * sizeof(WCHAR));
-		if (Dup == NULL)
-		{
-			FindClose(hFind);
-			return Exp;
-		}
-		CopyMemory(Dup, FullPath, (PathLen + 1) * sizeof(WCHAR));
-
-		Exp->Paths[Exp->Count++] = Dup;
+		Exp->Paths[Exp->Count++] = FullPath;
 
 	} while (FindNextFileW(hFind, &FindData));
 
