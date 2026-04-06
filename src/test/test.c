@@ -1929,37 +1929,91 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"cli_ansi_bytes_right.txt", file2);
 	ConcatPath(baseDir, L"cli_ansi_bytes_output.txt", outputPath);
 
-	// Pick a non-ASCII character and encode it using the current ACP so this
-	// test is stable across locales/code pages (including DBCS and UTF-8 ACP).
-	WCHAR sampleChar[2] = { 0x00E9, L'\0' }; // Prefer "é"
+	// Pick a non-ASCII sequence representable in current ACP without relying on
+	// specific glyphs (locale-agnostic for SBCS/DBCS/UTF-8 ACP configurations).
 	char acpBytes[8] = { 0 };
-	BOOL usedDefaultChar = FALSE;
-	int acpLen = WideCharToMultiByte(
-		CP_ACP,
-		0,
-		sampleChar,
-		1,
-		acpBytes,
-		ARRAYSIZE(acpBytes),
-		NULL,
-		&usedDefaultChar);
-	if (acpLen <= 0 || usedDefaultChar)
+	int acpLen = 0;
+
+	// 1) Prefer a true "extended single-byte" ACP byte when available.
+	for (int b = 0x80; b <= 0xFF && acpLen == 0; ++b)
 	{
-		// Fallback if preferred sample is not representable in this ACP.
-		sampleChar[0] = 0x00F1; // "ñ"
-		usedDefaultChar = FALSE;
-		acpLen = WideCharToMultiByte(
+		char oneByte[2] = { (char)b, '\0' };
+		WCHAR wideBuf[2] = { 0 };
+		int wideLen = MultiByteToWideChar(CP_ACP, 0, oneByte, -1, wideBuf, ARRAYSIZE(wideBuf));
+		if (wideLen <= 1 || wideBuf[0] == L'X' || wideBuf[0] < 0x20)
+			continue;
+
+		BOOL usedDefaultChar = FALSE;
+		char roundTrip[4] = { 0 };
+		int roundTripLen = WideCharToMultiByte(
 			CP_ACP,
-			0,
-			sampleChar,
+			WC_NO_BEST_FIT_CHARS,
+			wideBuf,
 			1,
-			acpBytes,
-			ARRAYSIZE(acpBytes),
+			roundTrip,
+			ARRAYSIZE(roundTrip),
 			NULL,
 			&usedDefaultChar);
+		if (!usedDefaultChar && roundTripLen == 1 && (unsigned char)roundTrip[0] == (unsigned char)b)
+		{
+			acpBytes[0] = (char)b;
+			acpLen = 1;
+		}
 	}
+
+	// 2) If no single-byte extended value exists (e.g., ACP=UTF-8), probe a
+	// broader set of Unicode code points and keep the first exact ACP encoding.
+	if (acpLen == 0)
+	{
+		static const WCHAR kCandidates[] = {
+			0x00E9, // é
+			0x00F1, // ñ
+			0x03A9, // Ω
+			0x0416, // Ж
+			0x4E2D, // 中
+			0x20AC, // €
+		};
+
+		for (size_t i = 0; i < ARRAYSIZE(kCandidates) && acpLen == 0; ++i)
+		{
+			WCHAR candidate[2] = { kCandidates[i], L'\0' };
+			BOOL usedDefaultChar = FALSE;
+			char encoded[8] = { 0 };
+			int encodedLen = WideCharToMultiByte(
+				CP_ACP,
+				WC_NO_BEST_FIT_CHARS,
+				candidate,
+				1,
+				encoded,
+				ARRAYSIZE(encoded),
+				NULL,
+				&usedDefaultChar);
+			if (encodedLen <= 0 || usedDefaultChar)
+				continue;
+
+			BOOL badByte = FALSE;
+			for (int bi = 0; bi < encodedLen; ++bi)
+			{
+				if (encoded[bi] == '\0' || encoded[bi] == '\r' || encoded[bi] == '\n')
+				{
+					badByte = TRUE;
+					break;
+				}
+			}
+			if (badByte)
+				continue;
+
+			WCHAR roundTripWide[4] = { 0 };
+			int roundTripWideLen = MultiByteToWideChar(CP_ACP, 0, encoded, encodedLen, roundTripWide, ARRAYSIZE(roundTripWide));
+			if (roundTripWideLen <= 0 || roundTripWide[0] == L'X')
+				continue;
+
+			CopyMemory(acpBytes, encoded, (SIZE_T)encodedLen);
+			acpLen = encodedLen;
+		}
+	}
+
 	ASSERT_TRUE(acpLen > 0);
-	ASSERT_TRUE(!usedDefaultChar);
 
 	unsigned char left[16] = { 0 };
 	ASSERT_TRUE((size_t)acpLen + 1 <= ARRAYSIZE(left));
