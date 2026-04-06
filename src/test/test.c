@@ -1685,6 +1685,7 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 		// Some Windows environments emit different wildcard diagnostics for deep
 		// paths. Keep this branch broad but still require evidence that the
 		// long-path test data flowed through CLI output.
+		ASSERT_TRUE(exitCode != 0);
 		ASSERT_TRUE(output[0] != '\0');
 		ASSERT_TRUE(strstr(output, "seg_11_abcdefghijklmnop") != NULL);
 	}
