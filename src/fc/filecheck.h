@@ -2060,31 +2060,50 @@ extern "C" {
 	}
 
 	/**
+	 * @brief Status values for UTF-8 to wide-path conversion.
+	 * @internal
+	 */
+	typedef enum _FC_UTF8_TO_WIDE_STATUS
+	{
+		FC_UTF8_TO_WIDE_OK = 0,
+		FC_UTF8_TO_WIDE_INVALID_PARAM,
+		FC_UTF8_TO_WIDE_INVALID_UTF8,
+		FC_UTF8_TO_WIDE_OUT_OF_MEMORY,
+	} _FC_UTF8_TO_WIDE_STATUS;
+
+	/**
 	 * @brief Converts a UTF-8 encoded string to a new wide (UTF-16) string.
 	 * @internal
 	 * @param Utf8String The null-terminated UTF-8 string to convert.
-	 * @return A pointer to a new, heap-allocated, null-terminated wide string, or NULL on failure. The caller must free this memory.
+	 * @param WideStringOut Receives a new heap-allocated wide string on success.
+	 * @return A status code describing success or failure.
 	 */
-	static WCHAR* _FC_ConvertUtf8ToWide(const char* Utf8String)
+	static _FC_UTF8_TO_WIDE_STATUS
+		_FC_ConvertUtf8ToWide(
+			_In_z_ const char* Utf8String,
+			_Outptr_result_z_ WCHAR** WideStringOut)
 	{
-		if (Utf8String == NULL) return NULL;
+		if (WideStringOut == NULL || Utf8String == NULL)
+			return FC_UTF8_TO_WIDE_INVALID_PARAM;
+
+		*WideStringOut = NULL;
 
 		int wideLength = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8String, -1, NULL, 0);
-		if (wideLength == 0) {
-			return NULL; // Invalid characters or other error
-		}
+		if (wideLength == 0)
+			return FC_UTF8_TO_WIDE_INVALID_UTF8;
 
 		WCHAR* wideBuffer = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wideLength * sizeof(WCHAR));
-		if (wideBuffer == NULL) {
-			return NULL; // Memory allocation failed
-		}
+		if (wideBuffer == NULL)
+			return FC_UTF8_TO_WIDE_OUT_OF_MEMORY;
 
-		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8String, -1, wideBuffer, wideLength) == 0) {
+		if (MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, Utf8String, -1, wideBuffer, wideLength) == 0)
+		{
 			HeapFree(GetProcessHeap(), 0, wideBuffer);
-			return NULL; // Conversion failed
+			return FC_UTF8_TO_WIDE_INVALID_UTF8;
 		}
 
-		return wideBuffer;
+		*WideStringOut = wideBuffer;
+		return FC_UTF8_TO_WIDE_OK;
 	}
 
 	/**
@@ -2192,6 +2211,8 @@ extern "C" {
 			_In_ const FC_CONFIG* Config)
 	{
 		FC_RESULT Result = FC_OK;
+		_FC_UTF8_TO_WIDE_STATUS Path1Status;
+		_FC_UTF8_TO_WIDE_STATUS Path2Status;
 		WCHAR* WidePath1 = NULL;
 		WCHAR* WidePath2 = NULL;
 
@@ -2201,21 +2222,21 @@ extern "C" {
 		}
 
 		// Convert paths, checking each one immediately.
-		WidePath1 = _FC_ConvertUtf8ToWide(Path1);
-		if (WidePath1 == NULL)
+		Path1Status = _FC_ConvertUtf8ToWide(Path1, &WidePath1);
+		if (Path1Status != FC_UTF8_TO_WIDE_OK)
 		{
-			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
-				? FC_ERROR_INVALID_PARAM
-				: FC_ERROR_MEMORY;
+			Result = (Path1Status == FC_UTF8_TO_WIDE_OUT_OF_MEMORY)
+				? FC_ERROR_MEMORY
+				: FC_ERROR_INVALID_PARAM;
 			goto cleanup;
 		}
 
-		WidePath2 = _FC_ConvertUtf8ToWide(Path2);
-		if (WidePath2 == NULL)
+		Path2Status = _FC_ConvertUtf8ToWide(Path2, &WidePath2);
+		if (Path2Status != FC_UTF8_TO_WIDE_OK)
 		{
-			Result = (GetLastError() == ERROR_NO_UNICODE_TRANSLATION)
-				? FC_ERROR_INVALID_PARAM
-				: FC_ERROR_MEMORY;
+			Result = (Path2Status == FC_UTF8_TO_WIDE_OUT_OF_MEMORY)
+				? FC_ERROR_MEMORY
+				: FC_ERROR_INVALID_PARAM;
 			goto cleanup;
 		}
 
