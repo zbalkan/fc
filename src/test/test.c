@@ -1474,7 +1474,12 @@ static BOOL ReadFileToBuffer(
 	{
 		DWORD bytesRead = 0;
 		char tmp[512];
-		if (!ReadFile(h, tmp, sizeof(tmp), &bytesRead, NULL) || bytesRead == 0)
+		if (!ReadFile(h, tmp, sizeof(tmp), &bytesRead, NULL))
+		{
+			CloseHandle(h);
+			return FALSE;
+		}
+		if (bytesRead == 0)
 			break;
 		DWORD toCopy = bytesRead;
 		if (toCopy > outCap - 1 - total)
