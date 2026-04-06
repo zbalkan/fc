@@ -1836,6 +1836,7 @@ static void Test_Cli_PositionalWildcardCountMismatchMarksDifferent(const WCHAR* 
 	ASSERT_TRUE(strstr(output, "FC: no differences encountered") != NULL);
 }
 
+#if defined(FC_TESTING)
 static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
 {
 	WCHAR dirLeft[MAX_LONG_PATH];
@@ -1909,6 +1910,17 @@ static void Test_Cli_WildcardAllocFailureOnGrowth(const WCHAR* baseDir)
 	ASSERT_TRUE(exitCode == 2);
 	ASSERT_TRUE(strstr(output, "Error: memory allocation failure during wildcard expansion.") != NULL);
 }
+#else
+static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
+{
+	UNREFERENCED_PARAMETER(baseDir);
+}
+
+static void Test_Cli_WildcardAllocFailureOnGrowth(const WCHAR* baseDir)
+{
+	UNREFERENCED_PARAMETER(baseDir);
+}
+#endif
 
 static void Test_Cli_LineOutput_Utf8Multibyte_NU(const WCHAR* baseDir)
 {

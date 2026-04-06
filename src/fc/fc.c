@@ -495,9 +495,14 @@ typedef enum {
 	WILDCARD_ALLOC_STEP_GROW_PATHS = 1
 } WILDCARD_ALLOC_STEP;
 
+#if defined(NDEBUG) && defined(FC_TESTING)
+#error FC_TESTING must not be enabled in release builds.
+#endif
+
 static BOOL
 ShouldForceWildcardAllocFailure(_In_ WILDCARD_ALLOC_STEP Step)
 {
+#if defined(FC_TESTING)
 	// Test-only hook used by CLI tests to simulate wildcard allocation failures.
 	static BOOL Initialized = FALSE;
 	static BOOL FailDupPath = FALSE;
@@ -529,6 +534,10 @@ ShouldForceWildcardAllocFailure(_In_ WILDCARD_ALLOC_STEP Step)
 	}
 
 	return FALSE;
+#else
+	UNREFERENCED_PARAMETER(Step);
+	return FALSE;
+#endif
 }
 
 /**
