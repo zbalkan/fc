@@ -1922,7 +1922,8 @@ extern "C" {
 	 * This function uses the native `RtlDosPathNameToNtPathName_U_WithStatus` API to
 	 * resolve a DOS-style path into its underlying NT object manager path. It performs
 	 * security checks to reject dangerous paths, such as those pointing directly to
-	 * devices (`\\.\`, `\\?\`) or reserved DOS device names (CON, PRN, etc.).
+	 * devices (`\\.\`, `\\?\`), reserved DOS device names (CON, PRN, etc.), or
+	 * Alternate Data Stream paths (e.g. `file.txt:stream`).
 	 * @internal
 	 * @param InputPath The Win32-style path to process.
 	 * @param[out] CanonicalPathOut A pointer to a WCHAR* that will receive the new, heap-allocated canonical path string. The caller must free this memory.
@@ -1963,7 +1964,26 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Step 3: Convert to full NT path via native call
+		// Step 3: Reject Alternate Data Stream (ADS) paths
+		// An ADS path embeds a colon after the filename, e.g. "C:\file.txt:stream".
+		// Skip the drive-letter colon at index 1 if present, then reject any further colon.
+		{
+			const WCHAR* scanStart = InputPath;
+			if (InputPath[0] != L'\0' &&
+				InputPath[1] != L'\0' &&
+				((InputPath[0] >= L'A' && InputPath[0] <= L'Z') ||
+				 (InputPath[0] >= L'a' && InputPath[0] <= L'z')) &&
+				InputPath[1] == L':')
+			{
+				scanStart = InputPath + 2;
+			}
+			if (wcschr(scanStart, L':') != NULL)
+			{
+				goto cleanup;
+			}
+		}
+
+		// Step 4: Convert to full NT path via native call
 		NTSTATUS Status = RtlDosPathNameToNtPathName_U_WithStatus(
 			InputPath,
 			&NtPath,
@@ -1976,7 +1996,7 @@ extern "C" {
 		}
 		ntPathInitialized = TRUE;
 
-		// Step 4: Detect risky NT path prefixes
+		// Step 5: Detect risky NT path prefixes
 		if (NtPath.Length >= 8 * sizeof(WCHAR))
 		{
 			const WCHAR* s = NtPath.Buffer;
@@ -1988,7 +2008,7 @@ extern "C" {
 			}
 		}
 
-		// Step 5: Reject reserved DOS device names
+		// Step 6: Reject reserved DOS device names
 		const WCHAR* base = wcsrchr(NtPath.Buffer, L'\\');
 		if (base == NULL)
 		{
@@ -2009,7 +2029,7 @@ extern "C" {
 			}
 		}
 
-		// Step 6: Allocate and copy canonical path
+		// Step 7: Allocate and copy canonical path
 		size_t len = (NtPath.Length / sizeof(WCHAR)) + 1;
 		outPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, len * sizeof(WCHAR));
 		if (!outPath)
@@ -2023,7 +2043,7 @@ extern "C" {
 			goto cleanup;
 		}
 
-		// Step 7: Success - set output parameter
+		// Step 8: Success - set output parameter
 		*CanonicalPathOut = outPath;
 		success = TRUE;
 

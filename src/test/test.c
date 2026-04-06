@@ -940,8 +940,7 @@ static void Test_AlternateDataStream(const WCHAR* baseDir)
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
-	// Comparing a file with its ADS should be treated as a different file,
-	// but path canonicalization might reject it first. Invalid param is a safe result.
+	// Comparing a file with its ADS should be rejected by path canonicalization.
 	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_ERROR_INVALID_PARAM);
 	FreeTestPaths(&tp);
 }
