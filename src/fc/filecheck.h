@@ -220,6 +220,7 @@ extern "C" {
 		UINT Flags;                     /**< Option flags from FC_* defines. */
 		UINT ResyncLines;               /**< The number of matching lines to declare a resynchronization. */
 		UINT BufferLines;               /**< /LBn heuristic window for LCS anchor distance (not strict legacy buffering). */
+		size_t MaxTextFileBytes;        /**< Maximum file size allowed for text-mode parsing; 0 uses default and oversized text paths fall back to binary comparison. */
 		FC_DIFF_CALLBACK DiffCallback;  /**< The mandatory callback function for receiving structured diff reports. */
 		void* UserData;                 /**< A user-defined pointer passed to the callback function's context. */
 	} FC_CONFIG;
@@ -230,6 +231,14 @@ extern "C" {
 
 #ifndef _FC_ARRAYSIZE
 #define _FC_ARRAYSIZE(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
+#ifndef FC_DEFAULT_MAX_TEXT_FILE_BYTES
+#define FC_DEFAULT_MAX_TEXT_FILE_BYTES (128ull * 1024ull * 1024ull)
+#endif
+
+#ifndef FC_BINARY_STREAM_THRESHOLD_BYTES
+#define FC_BINARY_STREAM_THRESHOLD_BYTES (64ull * 1024ull * 1024ull)
 #endif
 
 	/**
@@ -1569,7 +1578,7 @@ extern "C" {
 			FILE_SHARE_READ,
 			NULL,
 			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
 			NULL);
 
 		if (FileHandle == INVALID_HANDLE_VALUE)
@@ -1643,6 +1652,78 @@ extern "C" {
 		return Buffer;
 	}
 
+	static inline BOOL
+		_FC_GetFileSizeW(
+			_In_z_ const WCHAR* Path,
+			_Out_ ULONGLONG* SizeOut)
+	{
+		if (Path == NULL || SizeOut == NULL)
+			return FALSE;
+
+		*SizeOut = 0;
+		HANDLE hFile = CreateFileW(
+			Path,
+			GENERIC_READ,
+			FILE_SHARE_READ,
+			NULL,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
+			NULL);
+		if (hFile == INVALID_HANDLE_VALUE)
+			return FALSE;
+
+		LARGE_INTEGER Size;
+		BOOL ok = GetFileSizeEx(hFile, &Size);
+		CloseHandle(hFile);
+		if (!ok || Size.QuadPart < 0)
+			return FALSE;
+
+		*SizeOut = (ULONGLONG)Size.QuadPart;
+		return TRUE;
+	}
+
+	static inline ULONGLONG
+		_FC_GetEffectiveTextLimitBytes(
+			_In_ const FC_CONFIG* Config)
+	{
+		if (Config != NULL && Config->MaxTextFileBytes > 0)
+			return (ULONGLONG)Config->MaxTextFileBytes;
+		return (ULONGLONG)FC_DEFAULT_MAX_TEXT_FILE_BYTES;
+	}
+
+	static inline ULONGLONG
+		_FC_GetEffectiveBinaryStreamThresholdBytes(void)
+	{
+#if defined(FC_TESTING)
+		WCHAR value[32];
+		DWORD len = GetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", value, _FC_ARRAYSIZE(value));
+		if (len > 0 && len < _FC_ARRAYSIZE(value))
+		{
+			WCHAR* endptr = NULL;
+			unsigned __int64 parsed = _wcstoui64(value, &endptr, 10);
+			if (endptr != value && *endptr == L'\0')
+				return (ULONGLONG)parsed;
+		}
+#endif
+		return (ULONGLONG)FC_BINARY_STREAM_THRESHOLD_BYTES;
+	}
+
+	static inline BOOL
+		_FC_ShouldUseBinaryForLargeText(
+			_In_z_ const WCHAR* Path1,
+			_In_z_ const WCHAR* Path2,
+			_In_ const FC_CONFIG* Config)
+	{
+		ULONGLONG limit = _FC_GetEffectiveTextLimitBytes(Config);
+		ULONGLONG size1 = 0, size2 = 0;
+
+		// Fail-open: if probing size fails, preserve existing behavior.
+		if (!_FC_GetFileSizeW(Path1, &size1) || !_FC_GetFileSizeW(Path2, &size2))
+			return FALSE;
+
+		return (size1 > limit || size2 > limit);
+	}
+
 	/**
 	 * @brief Analyzes a byte buffer to determine if it likely contains text.
 	 *
@@ -1714,7 +1795,7 @@ extern "C" {
 			FILE_SHARE_READ,
 			NULL,
 			OPEN_EXISTING,
-			FILE_ATTRIBUTE_NORMAL,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN,
 			NULL
 		);
 		if (hFile == INVALID_HANDLE_VALUE) return FALSE;
@@ -1800,16 +1881,143 @@ extern "C" {
 	/**
 	 * @brief Compares two files in binary mode.
 	 *
-	 * This function performs a byte-for-byte comparison of two files using memory-mapped I/O
-	 * for efficiency. It first checks if the file sizes are different and reports that via
-	 * the callback if so. If they are the same, it maps both files into memory and
-	 * iterates through them, calling the callback for every mismatched byte.
+	 * This function performs a byte-for-byte comparison of two files.
+	 * For smaller files it uses memory-mapped I/O for efficiency; for larger files it
+	 * switches to streamed micro-batches to avoid excessive cache and working-set pressure.
 	 * @internal
 	 * @param Path1 The path to the first file.
 	 * @param Path2 The path to the second file.
 	 * @param Config A pointer to the comparison configuration.
 	 * @return An FC_RESULT code indicating the outcome.
 	 */
+	static FC_RESULT
+		_FC_CompareFilesBinaryStreamed(
+			_In_z_ const WCHAR* Path1,
+			_In_z_ const WCHAR* Path2,
+			_In_ const FC_CONFIG* Config)
+	{
+		HANDLE File1Handle = INVALID_HANDLE_VALUE;
+		HANDLE File2Handle = INVALID_HANDLE_VALUE;
+		unsigned char* Buffer1 = NULL;
+		unsigned char* Buffer2 = NULL;
+		FC_RESULT Result = FC_ERROR_IO;
+		size_t offset = 0;
+
+		File1Handle = CreateFileW(Path1, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+		File2Handle = CreateFileW(Path2, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, NULL);
+
+		if (File1Handle == INVALID_HANDLE_VALUE || File2Handle == INVALID_HANDLE_VALUE)
+			goto cleanup;
+
+		LARGE_INTEGER File1Size, File2Size;
+		if (!GetFileSizeEx(File1Handle, &File1Size) || !GetFileSizeEx(File2Handle, &File2Size))
+			goto cleanup;
+
+		if (File1Size.QuadPart < 0 || File2Size.QuadPart < 0)
+			goto cleanup;
+
+		if ((ULONGLONG)File1Size.QuadPart > (ULONGLONG)SIZE_MAX ||
+			(ULONGLONG)File2Size.QuadPart > (ULONGLONG)SIZE_MAX)
+		{
+			goto cleanup;
+		}
+
+		enum { FC_BINARY_STREAM_CHUNK = 1024 * 1024 };
+		Buffer1 = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, FC_BINARY_STREAM_CHUNK);
+		Buffer2 = (unsigned char*)HeapAlloc(GetProcessHeap(), 0, FC_BINARY_STREAM_CHUNK);
+		if (Buffer1 == NULL || Buffer2 == NULL)
+		{
+			Result = FC_ERROR_MEMORY;
+			goto cleanup;
+		}
+
+		LONGLONG MinSize = File1Size.QuadPart < File2Size.QuadPart
+			? File1Size.QuadPart : File2Size.QuadPart;
+		if ((ULONGLONG)MinSize > (ULONGLONG)SIZE_MAX)
+			goto cleanup;
+		size_t CompareSize = (size_t)MinSize;
+
+		Result = FC_OK;
+		while (offset < CompareSize)
+		{
+			size_t toRead = CompareSize - offset;
+			if (toRead > FC_BINARY_STREAM_CHUNK)
+				toRead = FC_BINARY_STREAM_CHUNK;
+
+			size_t filled1 = 0, filled2 = 0;
+			while (filled1 < toRead)
+			{
+				DWORD br = 0;
+				if (!ReadFile(File1Handle, Buffer1 + filled1, (DWORD)(toRead - filled1), &br, NULL))
+				{
+					Result = FC_ERROR_IO;
+					goto cleanup;
+				}
+				if (br == 0)
+				{
+					Result = FC_ERROR_IO; // Unexpected EOF before advertised file size.
+					goto cleanup;
+				}
+				filled1 += (size_t)br;
+			}
+
+			while (filled2 < toRead)
+			{
+				DWORD br = 0;
+				if (!ReadFile(File2Handle, Buffer2 + filled2, (DWORD)(toRead - filled2), &br, NULL))
+				{
+					Result = FC_ERROR_IO;
+					goto cleanup;
+				}
+				if (br == 0)
+				{
+					Result = FC_ERROR_IO; // Unexpected EOF before advertised file size.
+					goto cleanup;
+				}
+				filled2 += (size_t)br;
+			}
+
+			for (size_t i = 0; i < toRead; ++i)
+			{
+				if (Buffer1[i] != Buffer2[i])
+				{
+					if (Result == FC_OK)
+						Result = FC_DIFFERENT;
+					if (Config->DiffCallback != NULL)
+						{
+							FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, offset + i, Buffer1[i], offset + i, Buffer2[i] };
+							FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+							Config->DiffCallback(&BinContext, &block);
+						}
+				}
+			}
+			offset += toRead;
+		}
+
+		if (File1Size.QuadPart != File2Size.QuadPart)
+		{
+			Result = FC_DIFFERENT;
+			if (Config->DiffCallback != NULL)
+			{
+				FC_DIFF_BLOCK block = {
+					FC_DIFF_TYPE_SIZE,
+					(size_t)File1Size.QuadPart, (size_t)File1Size.QuadPart,
+					(size_t)File2Size.QuadPart, (size_t)File2Size.QuadPart };
+				FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+				Config->DiffCallback(&BinContext, &block);
+			}
+		}
+
+	cleanup:
+		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
+		if (Buffer2) HeapFree(GetProcessHeap(), 0, Buffer2);
+		if (File1Handle != INVALID_HANDLE_VALUE) CloseHandle(File1Handle);
+		if (File2Handle != INVALID_HANDLE_VALUE) CloseHandle(File2Handle);
+		return Result;
+	}
+
 	static FC_RESULT
 		_FC_CompareFilesBinary(
 			_In_z_ const WCHAR* Path1,
@@ -1843,6 +2051,18 @@ extern "C" {
 		{
 			Result = FC_OK;
 			goto cleanup;
+		}
+
+		// For large files, prefer streaming reads to avoid heavy mapping/cache pressure.
+		{
+			ULONGLONG bigger = (File1Size.QuadPart > File2Size.QuadPart)
+				? (ULONGLONG)File1Size.QuadPart
+				: (ULONGLONG)File2Size.QuadPart;
+			if (bigger >= _FC_GetEffectiveBinaryStreamThresholdBytes())
+			{
+				Result = _FC_CompareFilesBinaryStreamed(Path1, Path2, Config);
+				goto cleanup;
+			}
 		}
 
 		// Compare the common prefix of both files byte-by-byte first, matching
@@ -2151,6 +2371,9 @@ extern "C" {
 		{
 		case FC_MODE_TEXT_ASCII:
 		case FC_MODE_TEXT_UNICODE:
+			// Avoid OOM-prone full-buffer text parsing for very large files.
+			if (_FC_ShouldUseBinaryForLargeText(Path1, Path2, Config))
+				return _FC_CompareFilesBinary(Path1, Path2, Config);
 			// Corrected order: Path1, Path2
 			return _FC_CompareFilesText(Path1, Path2, Config);
 
@@ -2171,7 +2394,11 @@ extern "C" {
 			BOOL isText1 = _FC_IsProbablyTextFileW(Path1);
 			BOOL isText2 = _FC_IsProbablyTextFileW(Path2);
 			if (isText1 && isText2)
+			{
+				if (_FC_ShouldUseBinaryForLargeText(Path1, Path2, Config))
+					return _FC_CompareFilesBinary(Path1, Path2, Config);
 				return _FC_CompareFilesText(Path1, Path2, Config);
+			}
 			else
 				return _FC_CompareFilesBinary(Path1, Path2, Config);
 		}
