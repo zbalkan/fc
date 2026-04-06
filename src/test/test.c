@@ -1524,6 +1524,7 @@ static BOOL ResolveFcExePath(_Out_writes_z_(MAX_LONG_PATH) WCHAR* fcPath)
 static BOOL RunFcToOutputFile(
 	_In_z_ const WCHAR* pattern1,
 	_In_z_ const WCHAR* pattern2,
+	_In_opt_z_ const WCHAR* options,
 	_In_z_ const WCHAR* outputPath,
 	_Out_ DWORD* exitCode)
 {
@@ -1533,8 +1534,8 @@ static BOOL RunFcToOutputFile(
 
 	WCHAR cmdLine[4096];
 	if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
-		L"\"%s\" \"%s\" \"%s\"",
-		fcPath, pattern1, pattern2)))
+		L"\"%s\" %s\"%s\" \"%s\"",
+		fcPath, (options != NULL) ? options : L"", pattern1, pattern2)))
 	{
 		return FALSE;
 	}
@@ -1576,6 +1577,15 @@ static BOOL RunFcToOutputFile(
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);
 	return ok;
+}
+
+static BOOL RunFcToOutputFileNoOptions(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	return RunFcToOutputFile(pattern1, pattern2, NULL, outputPath, exitCode);
 }
 
 static void BuildLongSubdirName(_In_ int index, _Out_writes_z_(32) WCHAR* out)
@@ -1668,11 +1678,11 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 
 	DWORD exitCode = 0;
 	char output[12288];
-	BOOL ran = RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode);
+	BOOL ran = RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode);
 	BOOL readOk = ran ? ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)) : FALSE;
 	if (!ran || !readOk || exitCode != 0 || strstr(output, "Comparing files ") == NULL)
 	{
-		ASSERT_TRUE(RunFcToOutputFile(pattern1Prefixed, pattern2Prefixed, outputPath, &exitCode));
+		ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1Prefixed, pattern2Prefixed, outputPath, &exitCode));
 		ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	}
 	if (exitCode == 0 && strstr(output, "Comparing files ") != NULL)
@@ -1724,7 +1734,7 @@ static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_disjoint_output.txt"))) Throw(L"Combine fail", NULL);
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode != 0);
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
@@ -1763,7 +1773,7 @@ static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_partial_output.txt"))) Throw(L"Combine fail", NULL);
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 0);
 	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
@@ -1796,7 +1806,7 @@ static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"dup"));
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 2);
@@ -1837,11 +1847,53 @@ static void Test_Cli_WildcardAllocFailureOnGrowth(const WCHAR* baseDir)
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"grow"));
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 2);
 	ASSERT_TRUE(strstr(output, "Error: memory allocation failure during wildcard expansion.") != NULL);
+}
+
+static void Test_Cli_LineOutput_Utf8Multibyte_NU(const WCHAR* baseDir)
+{
+	WCHAR file1[MAX_LONG_PATH];
+	WCHAR file2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	ConcatPath(baseDir, L"cli_utf8_multibyte_left.txt", file1);
+	ConcatPath(baseDir, L"cli_utf8_multibyte_right.txt", file2);
+	ConcatPath(baseDir, L"cli_utf8_multibyte_output.txt", outputPath);
+
+	WRITE_STR_FILE(file1, "café ☕\n");
+	WRITE_STR_FILE(file2, "cafe ☕\n");
+
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(file1, file2, L"/N /U ", outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 1);
+	ASSERT_TRUE(strstr(output, "    1:  caf\xc3\xa9 \xe2\x98\x95") != NULL);
+}
+
+static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
+{
+	WCHAR file1[MAX_LONG_PATH];
+	WCHAR file2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	ConcatPath(baseDir, L"cli_ansi_bytes_left.txt", file1);
+	ConcatPath(baseDir, L"cli_ansi_bytes_right.txt", file2);
+	ConcatPath(baseDir, L"cli_ansi_bytes_output.txt", outputPath);
+
+	const unsigned char left[] = { 0xE9, '\n' };
+	const unsigned char right[] = { 'X', '\n' };
+	ASSERT_TRUE(WriteDataFile(file1, left, (DWORD)sizeof(left)));
+	ASSERT_TRUE(WriteDataFile(file2, right, (DWORD)sizeof(right)));
+
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(file1, file2, L"/N /L ", outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 1);
+	ASSERT_TRUE(strstr(output, "    1:  \xc3\xa9") != NULL);
 }
 
 int wmain(void)
@@ -1919,6 +1971,8 @@ int wmain(void)
 	Test_Cli_DualWildcardPartialStemOverlap(testDir);
 	Test_Cli_WildcardAllocFailureOnPathDuplication(testDir);
 	Test_Cli_WildcardAllocFailureOnGrowth(testDir);
+	Test_Cli_LineOutput_Utf8Multibyte_NU(testDir);
+	Test_Cli_LineOutput_AnsiExtendedBytes_NL(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
