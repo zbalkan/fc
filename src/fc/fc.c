@@ -385,6 +385,7 @@ typedef struct {
 	WCHAR** Paths;     /**< Array of heap-allocated file path strings. */
 	size_t  Count;     /**< Number of valid entries in Paths. */
 	size_t  Capacity;  /**< Allocated capacity of Paths. */
+	BOOL    HadError;  /**< TRUE if expansion encountered an allocation error. */
 } WILDCARD_EXPANSION;
 
 static void
@@ -431,6 +432,47 @@ BuildFullPathAlloc(
 	return FullPath;
 }
 
+typedef enum {
+	WILDCARD_ALLOC_STEP_DUP_PATH = 0,
+	WILDCARD_ALLOC_STEP_GROW_PATHS = 1
+} WILDCARD_ALLOC_STEP;
+
+static BOOL
+ShouldForceWildcardAllocFailure(_In_ WILDCARD_ALLOC_STEP Step)
+{
+	// Test-only hook used by CLI tests to simulate wildcard allocation failures.
+	static BOOL Initialized = FALSE;
+	static BOOL FailDupPath = FALSE;
+	static BOOL FailGrowPaths = FALSE;
+
+	if (!Initialized)
+	{
+		WCHAR value[32];
+		DWORD len = GetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", value, ARRAYSIZE(value));
+		if (len > 0 && len < ARRAYSIZE(value))
+		{
+			if (_wcsicmp(value, L"dup") == 0)
+				FailDupPath = TRUE;
+			else if (_wcsicmp(value, L"grow") == 0)
+				FailGrowPaths = TRUE;
+		}
+		Initialized = TRUE;
+	}
+
+	if (Step == WILDCARD_ALLOC_STEP_DUP_PATH && FailDupPath)
+	{
+		FailDupPath = FALSE;
+		return TRUE;
+	}
+	if (Step == WILDCARD_ALLOC_STEP_GROW_PATHS && FailGrowPaths)
+	{
+		FailGrowPaths = FALSE;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
 /**
  * @brief Expands a wildcard pattern into a list of matching file paths.
  *
@@ -455,8 +497,8 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 		GetProcessHeap(), HEAP_ZERO_MEMORY, InitialCapacity * sizeof(WCHAR*));
 	if (Exp->Paths == NULL)
 	{
-		HeapFree(GetProcessHeap(), 0, Exp);
-		return NULL;
+		Exp->HadError = TRUE;
+		return Exp;
 	}
 	Exp->Capacity = InitialCapacity;
 
@@ -475,12 +517,14 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 			continue;
 
 		// Build the full path from the pattern directory and the found name.
-		WCHAR* FullPath = BuildFullPathAlloc(Pattern, FindData.cFileName);
+		WCHAR* FullPath = NULL;
+		if (!ShouldForceWildcardAllocFailure(WILDCARD_ALLOC_STEP_DUP_PATH))
+			FullPath = BuildFullPathAlloc(Pattern, FindData.cFileName);
 		if (FullPath == NULL)
 		{
 			FindClose(hFind);
-			FreeWildcardExpansion(Exp);
-			return NULL;
+			Exp->HadError = TRUE;
+			return Exp;
 		}
 
 		// Grow the array if needed.
@@ -495,15 +539,19 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 				return NULL;
 			}
 			size_t NewCapacity = Exp->Capacity * 2;
-			WCHAR** NewPaths = (WCHAR**)HeapReAlloc(
-				GetProcessHeap(), 0,
-				Exp->Paths, NewCapacity * sizeof(WCHAR*));
+			WCHAR** NewPaths = NULL;
+			if (!ShouldForceWildcardAllocFailure(WILDCARD_ALLOC_STEP_GROW_PATHS))
+			{
+				NewPaths = (WCHAR**)HeapReAlloc(
+					GetProcessHeap(), 0,
+					Exp->Paths, NewCapacity * sizeof(WCHAR*));
+			}
 			if (NewPaths == NULL)
 			{
 				HeapFree(GetProcessHeap(), 0, FullPath);
 				FindClose(hFind);
-				FreeWildcardExpansion(Exp);
-				return NULL;
+				Exp->HadError = TRUE;
+				return Exp;
 			}
 			Exp->Paths = NewPaths;
 			Exp->Capacity = NewCapacity;
@@ -604,6 +652,13 @@ WildcardFileCompare(
 	WILDCARD_EXPANSION* Exp2 = ExpandWildcardPattern(Pattern2);
 
 	if (Exp1 == NULL || Exp2 == NULL)
+	{
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		ConPrintW(GetStdHandle(STD_ERROR_HANDLE), L"Error: memory allocation failure during wildcard expansion.\n");
+		return 2;
+	}
+	if (Exp1->HadError || Exp2->HadError)
 	{
 		FreeWildcardExpansion(Exp1);
 		FreeWildcardExpansion(Exp2);

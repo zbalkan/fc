@@ -1770,6 +1770,80 @@ static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") == NULL);
 }
 
+static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_dup_left"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_dup_right"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR rightA[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"dupfail.txt", leftA);
+	ConcatPath(dirRight, L"dupfail.bak", rightA);
+	WRITE_STR_FILE(leftA, "left\n");
+	WRITE_STR_FILE(rightA, "right\n");
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_alloc_dup_output.txt"))) Throw(L"Combine fail", NULL);
+
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"dup"));
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 2);
+	ASSERT_TRUE(strstr(output, "Error: memory allocation failure during wildcard expansion.") != NULL);
+}
+
+static void Test_Cli_WildcardAllocFailureOnGrowth(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_grow_left"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_grow_right"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR rightAnchor[MAX_LONG_PATH];
+	ConcatPath(dirRight, L"keepalive.bak", rightAnchor);
+	WRITE_STR_FILE(rightAnchor, "anchor\n");
+
+	// ExpandWildcardPattern starts at capacity 16; create 17 files to force growth.
+	for (int i = 0; i < 17; i++)
+	{
+		WCHAR fileName[64];
+		WCHAR filePath[MAX_LONG_PATH];
+		if (FAILED(StringCchPrintfW(fileName, ARRAYSIZE(fileName), L"grow_%02d.txt", i)))
+			Throw(L"String format fail", NULL);
+		ConcatPath(dirLeft, fileName, filePath);
+		WRITE_STR_FILE(filePath, "growth trigger\n");
+	}
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_alloc_grow_output.txt"))) Throw(L"Combine fail", NULL);
+
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"grow"));
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 2);
+	ASSERT_TRUE(strstr(output, "Error: memory allocation failure during wildcard expansion.") != NULL);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1843,6 +1917,8 @@ int wmain(void)
 	Test_Cli_WildcardLongPathFidelity(testDir);
 	Test_Cli_DualWildcardDisjointStems(testDir);
 	Test_Cli_DualWildcardPartialStemOverlap(testDir);
+	Test_Cli_WildcardAllocFailureOnPathDuplication(testDir);
+	Test_Cli_WildcardAllocFailureOnGrowth(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
