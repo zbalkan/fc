@@ -3,6 +3,7 @@
 // WideCharToMultiByte, ExitProcess
 #include <strsafe.h>     // StringCchLengthA/W, StringCchCopyW, StringCchCatW
 #include <pathcch.h>     // PathCchCombine, PathCchAddBackslash
+#include <string.h>      // strstr
 #include "../fc/filecheck.h"   // FC_CONFIG, FC_RESULT, FC_OK, FC_DIFFERENT, FC_MODE_*, FC_IGNORE_*,
 // FileCheckCompareFilesUtf8()
 
@@ -1456,6 +1457,204 @@ static void Test_Regression_LBn_WindowLimitsMatch(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static BOOL ReadFileToBuffer(
+	_In_z_ const WCHAR* path,
+	_Out_writes_z_(outCap) char* outBuf,
+	_In_ DWORD outCap)
+{
+	HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	DWORD total = 0;
+	if (outCap > 0)
+		outBuf[0] = '\0';
+	while (outCap > 0 && total < outCap - 1)
+	{
+		DWORD bytesRead = 0;
+		char tmp[512];
+		if (!ReadFile(h, tmp, sizeof(tmp), &bytesRead, NULL))
+		{
+			CloseHandle(h);
+			return FALSE;
+		}
+		if (bytesRead == 0)
+			break;
+		DWORD toCopy = bytesRead;
+		if (toCopy > outCap - 1 - total)
+			toCopy = outCap - 1 - total;
+		CopyMemory(outBuf + total, tmp, toCopy);
+		total += toCopy;
+	}
+	if (outCap > 0)
+		outBuf[total] = '\0';
+	CloseHandle(h);
+	return TRUE;
+}
+
+static BOOL ResolveFcExePath(_Out_writes_z_(MAX_LONG_PATH) WCHAR* fcPath)
+{
+	if (!GetModuleFileNameW(NULL, fcPath, MAX_LONG_PATH))
+		return FALSE;
+
+	WCHAR* lastSlash = wcsrchr(fcPath, L'\\');
+	if (lastSlash == NULL)
+		return FALSE;
+	lastSlash[1] = L'\0';
+	if (FAILED(StringCchCatW(fcPath, MAX_LONG_PATH, L"fc.exe")))
+		return FALSE;
+	if (GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES)
+		return TRUE;
+
+	WCHAR cwd[MAX_LONG_PATH];
+	if (!GetCurrentDirectoryW(MAX_LONG_PATH, cwd))
+		return FALSE;
+
+	if (FAILED(PathCchCombine(fcPath, MAX_LONG_PATH, cwd, L"src\\x64\\Release\\fc.exe")))
+		return FALSE;
+	if (GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES)
+		return TRUE;
+
+	if (FAILED(PathCchCombine(fcPath, MAX_LONG_PATH, cwd, L"x64\\Release\\fc.exe")))
+		return FALSE;
+	return GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES;
+}
+
+static BOOL RunFcToOutputFile(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	WCHAR fcPath[MAX_LONG_PATH];
+	if (!ResolveFcExePath(fcPath))
+		return FALSE;
+
+	WCHAR cmdLine[4096];
+	if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+		L"\"%s\" \"%s\" \"%s\"",
+		fcPath, pattern1, pattern2)))
+	{
+		return FALSE;
+	}
+
+	SECURITY_ATTRIBUTES sa = { 0 };
+	sa.nLength = sizeof(sa);
+	sa.bInheritHandle = TRUE;
+	HANDLE outFile = CreateFileW(outputPath, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (outFile == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	STARTUPINFOW si = { 0 };
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES;
+	si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+	si.hStdOutput = outFile;
+	si.hStdError = outFile;
+
+	PROCESS_INFORMATION pi = { 0 };
+	BOOL ok = CreateProcessW(
+		fcPath,
+		cmdLine,
+		NULL,
+		NULL,
+		TRUE,
+		0,
+		NULL,
+		NULL,
+		&si,
+		&pi);
+
+	CloseHandle(outFile);
+	if (!ok)
+		return FALSE;
+
+	WaitForSingleObject(pi.hProcess, INFINITE);
+	ok = GetExitCodeProcess(pi.hProcess, exitCode);
+
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return ok;
+}
+
+static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_left"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_right"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR leftB[MAX_LONG_PATH];
+	WCHAR rightA[MAX_LONG_PATH];
+	WCHAR rightB[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"alpha.txt", leftA);
+	ConcatPath(dirLeft, L"beta.txt", leftB);
+	ConcatPath(dirRight, L"gamma.bak", rightA);
+	ConcatPath(dirRight, L"delta.bak", rightB);
+
+	WRITE_STR_FILE(leftA, "left alpha\n");
+	WRITE_STR_FILE(leftB, "left beta\n");
+	WRITE_STR_FILE(rightA, "right gamma\n");
+	WRITE_STR_FILE(rightB, "right delta\n");
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_disjoint_output.txt"))) Throw(L"Combine fail", NULL);
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode != 0);
+	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
+}
+
+static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_left_partial"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_right_partial"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR leftB[MAX_LONG_PATH];
+	WCHAR rightA[MAX_LONG_PATH];
+	WCHAR rightB[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"alpha.txt", leftA);
+	ConcatPath(dirLeft, L"beta.txt", leftB);
+	ConcatPath(dirRight, L"alpha.bak", rightA);
+	ConcatPath(dirRight, L"gamma.bak", rightB);
+
+	// One matching stem pair ("alpha"), one unmatched file on each side.
+	WRITE_STR_FILE(leftA, "shared content\n");
+	WRITE_STR_FILE(rightA, "shared content\n");
+	WRITE_STR_FILE(leftB, "left only\n");
+	WRITE_STR_FILE(rightB, "right only\n");
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_partial_output.txt"))) Throw(L"Combine fail", NULL);
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 0);
+	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
+	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") == NULL);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1526,6 +1725,8 @@ int wmain(void)
 	Test_Regression_AutoDetect_NullByteIsBinary(testDir);
 	Test_Regression_AutoDetect_TextContent_IsText(testDir);
 	Test_Regression_LBn_WindowLimitsMatch(testDir);
+	Test_Cli_DualWildcardDisjointStems(testDir);
+	Test_Cli_DualWildcardPartialStemOverlap(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");

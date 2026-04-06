@@ -258,6 +258,7 @@ CI runs automatically on every push and pull request using GitHub Actions (MSVC 
 To keep behavior explicit for maintainers and users, this project records intentional (or currently accepted) differences from Microsoft `fc.exe`:
 
 - **Wildcard matching**: Both file arguments support wildcards and match by file "stem"; error/warning reporting aligns to Windows behavior, but may differ for partial matches or ordering.
+  - If both wildcard sets expand successfully but no stem pairs match at all, CLI now reports: `FC: no matching stem pairs found for <pattern1> and <pattern2>` and exits non-zero.
 - **Output redirection**: Output is fully compatible with piping/redirection to files or CI environments, falling back to UTF-8 output if no console is present.
 - **`/OFF` and `/OFFLINE`**: Accepted as compatibility switches but currently act as no-ops in the CLI implementation.
 - **`/LBn`**: Implemented as a bounded resynchronization window heuristic in the LCS matcher, not as a strict legacy internal text-buffer emulation.
