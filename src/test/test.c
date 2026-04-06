@@ -1459,6 +1459,61 @@ static void Test_MaxTextFileBytes_ZeroUsesDefaultTextPath(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_BinaryStreamThresholdOverride_Identical(const WCHAR* baseDir)
+{
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"stream_identical_a.bin", tp.p1);
+	ConcatPath(baseDir, L"stream_identical_b.bin", tp.p2);
+
+	unsigned char data[4096];
+	for (size_t i = 0; i < ARRAYSIZE(data); ++i) data[i] = (unsigned char)(i & 0xFF);
+	ASSERT_TRUE(WriteDataFile(tp.p1, data, (DWORD)ARRAYSIZE(data)));
+	ASSERT_TRUE(WriteDataFile(tp.p2, data, (DWORD)ARRAYSIZE(data)));
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_BINARY, 0, &ctx);
+
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", L"1"));
+	FC_RESULT r = FC_CompareFilesW(tp.p1, tp.p2, &cfg);
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", NULL));
+
+	ASSERT_TRUE(r == FC_OK);
+	ASSERT_TRUE(ctx.CallbackCount == 0);
+	FreeTestPaths(&tp);
+}
+
+static void Test_BinaryStreamThresholdOverride_Different(const WCHAR* baseDir)
+{
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"stream_diff_a.bin", tp.p1);
+	ConcatPath(baseDir, L"stream_diff_b.bin", tp.p2);
+
+	unsigned char data1[4096];
+	unsigned char data2[4096];
+	for (size_t i = 0; i < ARRAYSIZE(data1); ++i)
+	{
+		data1[i] = (unsigned char)(i & 0xFF);
+		data2[i] = data1[i];
+	}
+	data2[2048] ^= 0x55;
+
+	ASSERT_TRUE(WriteDataFile(tp.p1, data1, (DWORD)ARRAYSIZE(data1)));
+	ASSERT_TRUE(WriteDataFile(tp.p2, data2, (DWORD)ARRAYSIZE(data2)));
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_BINARY, 0, &ctx);
+
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", L"1"));
+	FC_RESULT r = FC_CompareFilesW(tp.p1, tp.p2, &cfg);
+	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", NULL));
+
+	ASSERT_TRUE(r == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount > 0);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 2048);
+	FreeTestPaths(&tp);
+}
+
 static void Test_Regression_AutoDetect_TextContent_IsText(const WCHAR* baseDir)
 {
 	// Regression: FC_MODE_AUTO must classify a file with >= 90% printable ASCII
@@ -2203,6 +2258,8 @@ int wmain(void)
 	Test_MaxTextFileBytes_ExplicitTextFallsBackToBinary(testDir);
 	Test_MaxTextFileBytes_AutoTextFallsBackToBinary(testDir);
 	Test_MaxTextFileBytes_ZeroUsesDefaultTextPath(testDir);
+	Test_BinaryStreamThresholdOverride_Identical(testDir);
+	Test_BinaryStreamThresholdOverride_Different(testDir);
 	Test_Regression_AutoDetect_TextContent_IsText(testDir);
 	Test_Regression_LBn_WindowLimitsMatch(testDir);
 	Test_Cli_WildcardLongPathFidelity(testDir);

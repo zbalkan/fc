@@ -1691,6 +1691,23 @@ extern "C" {
 		return (ULONGLONG)FC_DEFAULT_MAX_TEXT_FILE_BYTES;
 	}
 
+	static inline ULONGLONG
+		_FC_GetEffectiveBinaryStreamThresholdBytes(void)
+	{
+#if defined(FC_TESTING)
+		WCHAR value[32];
+		DWORD len = GetEnvironmentVariableW(L"FC_BINARY_STREAM_THRESHOLD_OVERRIDE", value, _FC_ARRAYSIZE(value));
+		if (len > 0 && len < _FC_ARRAYSIZE(value))
+		{
+			WCHAR* endptr = NULL;
+			unsigned __int64 parsed = _wcstoui64(value, &endptr, 10);
+			if (endptr != value && *endptr == L'\0')
+				return (ULONGLONG)parsed;
+		}
+#endif
+		return (ULONGLONG)FC_BINARY_STREAM_THRESHOLD_BYTES;
+	}
+
 	static inline BOOL
 		_FC_ShouldUseBinaryForLargeText(
 			_In_z_ const WCHAR* Path1,
@@ -1916,39 +1933,67 @@ extern "C" {
 			goto cleanup;
 		}
 
+		LONGLONG MinSize = File1Size.QuadPart < File2Size.QuadPart
+			? File1Size.QuadPart : File2Size.QuadPart;
+		if ((ULONGLONG)MinSize > (ULONGLONG)SIZE_MAX)
+			goto cleanup;
+		size_t CompareSize = (size_t)MinSize;
+
 		Result = FC_OK;
-		for (;;)
+		while (offset < CompareSize)
 		{
-			DWORD bytesRead1 = 0, bytesRead2 = 0;
-			if (!ReadFile(File1Handle, Buffer1, FC_BINARY_STREAM_CHUNK, &bytesRead1, NULL) ||
-				!ReadFile(File2Handle, Buffer2, FC_BINARY_STREAM_CHUNK, &bytesRead2, NULL))
+			size_t toRead = CompareSize - offset;
+			if (toRead > FC_BINARY_STREAM_CHUNK)
+				toRead = FC_BINARY_STREAM_CHUNK;
+
+			size_t filled1 = 0, filled2 = 0;
+			while (filled1 < toRead)
 			{
-				Result = FC_ERROR_IO;
-				goto cleanup;
+				DWORD br = 0;
+				if (!ReadFile(File1Handle, Buffer1 + filled1, (DWORD)(toRead - filled1), &br, NULL))
+				{
+					Result = FC_ERROR_IO;
+					goto cleanup;
+				}
+				if (br == 0)
+				{
+					Result = FC_ERROR_IO; // Unexpected EOF before advertised file size.
+					goto cleanup;
+				}
+				filled1 += (size_t)br;
 			}
 
-			if (bytesRead1 == 0 && bytesRead2 == 0)
-				break;
+			while (filled2 < toRead)
+			{
+				DWORD br = 0;
+				if (!ReadFile(File2Handle, Buffer2 + filled2, (DWORD)(toRead - filled2), &br, NULL))
+				{
+					Result = FC_ERROR_IO;
+					goto cleanup;
+				}
+				if (br == 0)
+				{
+					Result = FC_ERROR_IO; // Unexpected EOF before advertised file size.
+					goto cleanup;
+				}
+				filled2 += (size_t)br;
+			}
 
-			size_t common = (bytesRead1 < bytesRead2) ? (size_t)bytesRead1 : (size_t)bytesRead2;
-			for (size_t i = 0; i < common; ++i)
+			for (size_t i = 0; i < toRead; ++i)
 			{
 				if (Buffer1[i] != Buffer2[i])
 				{
 					if (Result == FC_OK)
 						Result = FC_DIFFERENT;
 					if (Config->DiffCallback != NULL)
-					{
-						FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, offset + i, Buffer1[i], offset + i, Buffer2[i] };
-						FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
-						Config->DiffCallback(&BinContext, &block);
-					}
+						{
+							FC_DIFF_BLOCK block = { FC_DIFF_TYPE_CHANGE, offset + i, Buffer1[i], offset + i, Buffer2[i] };
+							FC_USER_CONTEXT BinContext = { Path1, Path2, NULL, NULL, Config->UserData };
+							Config->DiffCallback(&BinContext, &block);
+						}
 				}
 			}
-			offset += common;
-
-			if (bytesRead1 != bytesRead2)
-				break; // Size mismatch (or partial tail) handled below via FC_DIFF_TYPE_SIZE.
+			offset += toRead;
 		}
 
 		if (File1Size.QuadPart != File2Size.QuadPart)
@@ -2013,7 +2058,7 @@ extern "C" {
 			ULONGLONG bigger = (File1Size.QuadPart > File2Size.QuadPart)
 				? (ULONGLONG)File1Size.QuadPart
 				: (ULONGLONG)File2Size.QuadPart;
-			if (bigger >= (ULONGLONG)FC_BINARY_STREAM_THRESHOLD_BYTES)
+			if (bigger >= _FC_GetEffectiveBinaryStreamThresholdBytes())
 			{
 				Result = _FC_CompareFilesBinaryStreamed(Path1, Path2, Config);
 				goto cleanup;
