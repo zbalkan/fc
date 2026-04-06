@@ -1883,9 +1883,45 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"cli_ansi_bytes_right.txt", file2);
 	ConcatPath(baseDir, L"cli_ansi_bytes_output.txt", outputPath);
 
-	const unsigned char left[] = { 0xE9, '\n' };
+	// Pick a non-ASCII character and encode it using the current ACP so this
+	// test is stable across locales/code pages (including DBCS and UTF-8 ACP).
+	WCHAR sampleChar[2] = { 0x00E9, L'\0' }; // Prefer "é"
+	char acpBytes[8] = { 0 };
+	BOOL usedDefaultChar = FALSE;
+	int acpLen = WideCharToMultiByte(
+		CP_ACP,
+		0,
+		sampleChar,
+		1,
+		acpBytes,
+		ARRAYSIZE(acpBytes),
+		NULL,
+		&usedDefaultChar);
+	if (acpLen <= 0 || usedDefaultChar)
+	{
+		// Fallback if preferred sample is not representable in this ACP.
+		sampleChar[0] = 0x00F1; // "ñ"
+		usedDefaultChar = FALSE;
+		acpLen = WideCharToMultiByte(
+			CP_ACP,
+			0,
+			sampleChar,
+			1,
+			acpBytes,
+			ARRAYSIZE(acpBytes),
+			NULL,
+			&usedDefaultChar);
+	}
+	ASSERT_TRUE(acpLen > 0);
+	ASSERT_TRUE(!usedDefaultChar);
+
+	unsigned char left[16] = { 0 };
+	ASSERT_TRUE((size_t)acpLen + 1 <= ARRAYSIZE(left));
+	CopyMemory(left, acpBytes, (SIZE_T)acpLen);
+	left[acpLen] = '\n';
+
 	const unsigned char right[] = { 'X', '\n' };
-	ASSERT_TRUE(WriteDataFile(file1, left, (DWORD)sizeof(left)));
+	ASSERT_TRUE(WriteDataFile(file1, left, (DWORD)(acpLen + 1)));
 	ASSERT_TRUE(WriteDataFile(file2, right, (DWORD)sizeof(right)));
 
 	DWORD exitCode = 0;
@@ -1894,10 +1930,13 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
 
-	// Validate ACP decoding without assuming a specific ANSI code page (e.g. CP1252).
-	// Convert 0xE9 via current ACP -> UTF-16 -> UTF-8, then match that emitted text.
-	char acpByteStr[2] = { (char)0xE9, '\0' };
-	WCHAR wideChar[2] = { 0 };
+	// Validate ACP decoding without assuming a specific ANSI code page.
+	// Convert the exact ACP bytes we wrote -> UTF-16 -> UTF-8, then match output.
+	char acpByteStr[16] = { 0 };
+	ASSERT_TRUE((size_t)acpLen < ARRAYSIZE(acpByteStr));
+	CopyMemory(acpByteStr, acpBytes, (SIZE_T)acpLen);
+	acpByteStr[acpLen] = '\0';
+	WCHAR wideChar[4] = { 0 };
 	int wideLen = MultiByteToWideChar(CP_ACP, 0, acpByteStr, -1, wideChar, ARRAYSIZE(wideChar));
 	ASSERT_TRUE(wideLen > 1);
 
