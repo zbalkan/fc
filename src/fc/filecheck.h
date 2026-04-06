@@ -1969,7 +1969,11 @@ extern "C" {
 		// Skip the drive-letter colon at index 1 if present, then reject any further colon.
 		{
 			const WCHAR* scanStart = InputPath;
-			if (iswalpha(InputPath[0]) && InputPath[1] == L':')
+			if (InputPath[0] != L'\0' &&
+				InputPath[1] != L'\0' &&
+				((InputPath[0] >= L'A' && InputPath[0] <= L'Z') ||
+				 (InputPath[0] >= L'a' && InputPath[0] <= L'z')) &&
+				InputPath[1] == L':')
 			{
 				scanStart = InputPath + 2;
 			}
