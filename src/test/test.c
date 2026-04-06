@@ -1784,9 +1784,10 @@ static void Test_Cli_PositionalWildcardCountMismatchMarksDifferent(const WCHAR* 
 	ConcatPath(dirLeft, L"beta.txt", leftB);
 	ConcatPath(baseDir, L"alpha_single.txt", rightSingle);
 
-	// Overlapping positional pair is equal; second left file is unmatched.
+	// Either positional pair is equal regardless of wildcard enumeration order;
+	// one left file still remains unmatched because the counts differ.
 	WRITE_STR_FILE(leftA, "same content\n");
-	WRITE_STR_FILE(leftB, "left extra\n");
+	WRITE_STR_FILE(leftB, "same content\n");
 	WRITE_STR_FILE(rightSingle, "same content\n");
 
 	WCHAR patternLeft[MAX_LONG_PATH];
