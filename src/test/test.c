@@ -1929,6 +1929,7 @@ int wmain(void)
 	Test_Cli_WildcardLongPathFidelity(testDir);
 	Test_Cli_DualWildcardDisjointStems(testDir);
 	Test_Cli_DualWildcardPartialStemOverlap(testDir);
+	Test_Cli_PositionalWildcardCountMismatchMarksDifferent(testDir);
 	Test_Cli_WildcardAllocFailureOnPathDuplication(testDir);
 	Test_Cli_WildcardAllocFailureOnGrowth(testDir);
 
