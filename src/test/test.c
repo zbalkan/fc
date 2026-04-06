@@ -1629,8 +1629,10 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 		Throw(L"Path concat fail", deepRight);
 	}
 
-	CreateDirectoryW(deepLeft, NULL);
-	CreateDirectoryW(deepRight, NULL);
+	if (!CreateDirectoryW(deepLeft, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+		Throw(L"CreateDirectoryW fail", deepLeft);
+	if (!CreateDirectoryW(deepRight, NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
+		Throw(L"CreateDirectoryW fail", deepRight);
 
 	WCHAR leftFile[MAX_LONG_PATH];
 	WCHAR rightFile[MAX_LONG_PATH];

@@ -387,6 +387,9 @@ typedef struct {
 	size_t  Capacity;  /**< Allocated capacity of Paths. */
 } WILDCARD_EXPANSION;
 
+static void
+FreeWildcardExpansion(_In_opt_ WILDCARD_EXPANSION* Expansion);
+
 /**
  * @brief Builds a full path by combining a directory prefix with a file name.
  *
@@ -476,7 +479,8 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 		if (FullPath == NULL)
 		{
 			FindClose(hFind);
-			return Exp;
+			FreeWildcardExpansion(Exp);
+			return NULL;
 		}
 
 		// Grow the array if needed.
@@ -487,7 +491,8 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 			{
 				HeapFree(GetProcessHeap(), 0, FullPath);
 				FindClose(hFind);
-				return Exp;
+				FreeWildcardExpansion(Exp);
+				return NULL;
 			}
 			size_t NewCapacity = Exp->Capacity * 2;
 			WCHAR** NewPaths = (WCHAR**)HeapReAlloc(
@@ -497,8 +502,8 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 			{
 				HeapFree(GetProcessHeap(), 0, FullPath);
 				FindClose(hFind);
-				// Partial results are still returned; caller will deal with them.
-				return Exp;
+				FreeWildcardExpansion(Exp);
+				return NULL;
 			}
 			Exp->Paths = NewPaths;
 			Exp->Capacity = NewCapacity;
