@@ -250,6 +250,16 @@ CI runs automatically on every push and pull request using GitHub Actions (MSVC 
 
 - Additional resynchronization indicators showing matching lines after difference blocks.
 
+## Documented Differences from Windows `fc.exe`
+
+To keep behavior explicit for maintainers and users, this project records intentional (or currently accepted) differences from Microsoft `fc.exe`:
+
+- **`/OFF` and `/OFFLINE` are accepted as compatibility switches but currently act as no-ops** in the CLI implementation.
+- **`/LBn` is implemented as a bounded resynchronization window heuristic in the LCS matcher**, not as a strict legacy internal text-buffer emulation.
+- **`FC_MODE_AUTO` uses extension-based binary detection first and then content sniffing**, which is intentionally modernized behavior for general use.
+
+When these behaviors change, please update this section and the corresponding inline code notes in `src/fc/fc.c` and `src/fc/filecheck.h`.
+
 ## License
 
 This project is licensed under the **GPL-2.0-only**. Please see the `LICENSE` file for details.

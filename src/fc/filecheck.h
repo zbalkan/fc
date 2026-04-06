@@ -219,7 +219,7 @@ extern "C" {
 		FC_MODE Mode;                   /**< Text, binary, or auto-detection mode. */
 		UINT Flags;                     /**< Option flags from FC_* defines. */
 		UINT ResyncLines;               /**< The number of matching lines to declare a resynchronization. */
-		UINT BufferLines;               /**< Reserved for future use. */
+		UINT BufferLines;               /**< /LBn heuristic window for LCS anchor distance (not strict legacy buffering). */
 		FC_DIFF_CALLBACK DiffCallback;  /**< The mandatory callback function for receiving structured diff reports. */
 		void* UserData;                 /**< A user-defined pointer passed to the callback function's context. */
 	} FC_CONFIG;
@@ -788,7 +788,7 @@ extern "C" {
 	 * @brief Converts a UTF-8 encoded string to its lowercase equivalent.
 	 *
 	 * This function handles multi-byte UTF-8 characters correctly by converting the
-	 * string to UTF-16, using the Windows `CharLowerW` function, and then converting
+	 * string to UTF-16, using the Windows `CharLowerBuffW` function, and then converting
 	 * it back to a new UTF-8 string.
 	 * @internal
 	 * @param Source A pointer to the source UTF-8 string.
@@ -846,8 +846,11 @@ extern "C" {
 			WideBuffer, WideLength) == 0)
 			goto cleanup;
 
-		// Lowercase in place
-		CharLowerW(WideBuffer);
+		// Lowercase in place using an explicit character count. This avoids
+		// relying on NUL-termination because the UTF-16 buffer above is created
+		// from an explicit byte length (SourceLength), not from a NUL-terminated input.
+		if (CharLowerBuffW(WideBuffer, (DWORD)WideLength) == 0 && WideLength > 0)
+			goto cleanup;
 
 		// Determine required UTF-8 length
 		int Utf8Length = WideCharToMultiByte(CP_UTF8, 0,
@@ -956,6 +959,59 @@ extern "C" {
 		// For all other cases (ASCII, or case-sensitive), compute the hash directly.
 		// _FC_ComputeHash now handles ASCII case-insensitivity on the fly.
 		return _FC_ComputeHash(String, Length, Flags);
+	}
+
+	/**
+	 * @brief Compares two parsed lines for equality using the same normalization as the
+	 * hash function.
+	 *
+	 * This is used as a secondary check after a hash match to rule out false positives
+	 * due to hash collisions.  The comparison is case-insensitive when FC_IGNORE_CASE is
+	 * set, mirroring the behavior of _FC_HashLine.
+	 * @internal
+	 * @param lineA The first line to compare.
+	 * @param lineB The second line to compare.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return TRUE if the lines are equal under the current configuration, FALSE otherwise.
+	 */
+	static inline BOOL
+		_FC_LinesEqual(
+			_In_ const _FC_LINE* lineA,
+			_In_ const _FC_LINE* lineB,
+			_In_ const FC_CONFIG* Config)
+	{
+		if (lineA->Length != lineB->Length)
+			return FALSE;
+
+		if (!(Config->Flags & FC_IGNORE_CASE))
+			return memcmp(lineA->Text, lineB->Text, lineA->Length) == 0;
+
+		if (Config->Mode == FC_MODE_TEXT_UNICODE)
+		{
+			// Unicode-aware case-insensitive comparison: lowercase both sides and compare.
+			size_t LowLenA = 0, LowLenB = 0;
+			char* LowA = _FC_StringToLowerUnicode(lineA->Text, lineA->Length, &LowLenA);
+			char* LowB = _FC_StringToLowerUnicode(lineB->Text, lineB->Length, &LowLenB);
+			// On allocation failure, both pointers are freed safely by _FC_HeapFree (which
+			// accepts NULL).  Returning FALSE is intentionally conservative: under OOM we
+			// report extra diffs rather than silently masking real differences.
+			BOOL Equal = FALSE;
+			if (LowA != NULL && LowB != NULL && LowLenA == LowLenB)
+				Equal = (memcmp(LowA, LowB, LowLenA) == 0);
+			_FC_HeapFree(LowA);
+			_FC_HeapFree(LowB);
+			return Equal;
+		}
+
+		// ASCII case-insensitive: compare byte-by-byte using the same _FC_ToLowerAscii
+		// that the hash function uses.
+		for (size_t i = 0; i < lineA->Length; i++)
+		{
+			if (_FC_ToLowerAscii((unsigned char)lineA->Text[i]) !=
+				_FC_ToLowerAscii((unsigned char)lineB->Text[i]))
+				return FALSE;
+		}
+		return TRUE;
 	}
 
 	/**
@@ -1178,10 +1234,30 @@ extern "C" {
 		}
 
 		for (size_t i = 0; i < pBufferA->Count; ++i) {
-			UINT hashA = ((_FC_LINE*)_FC_BufferGet(pBufferA, i))->Hash;
+			const _FC_LINE* lineA = (const _FC_LINE*)_FC_BufferGet(pBufferA, i);
+			UINT hashA = lineA->Hash;
 			_FC_HASH_MAP_ENTRY* entry = _FC_HashMapFind(&MapB, hashA);
 			if (entry) {
 				for (_FC_MATCH* match = entry->MatchHead; match != NULL; match = match->Next) {
+					// NOTE (intentional divergence): /LBn is modeled as an LCS anchor-distance
+					// window, not as strict legacy fc.exe internal line-buffer emulation.
+					// See README "Documented Differences from Windows fc.exe".
+					if (Config->BufferLines > 0)
+					{
+						size_t j = match->IndexInB;
+						size_t delta = (i > j) ? (i - j) : (j - i);
+						if (delta > (size_t)Config->BufferLines)
+							continue;
+					}
+
+					const _FC_LINE* lineB = (const _FC_LINE*)_FC_BufferGet(pBufferB, match->IndexInB);
+					// Hashes are only a pre-filter; verify actual line equality to avoid
+					// false matches on hash collisions.  Use the config-aware helper so that
+					// case-insensitive modes are handled correctly (raw memcmp would reject
+					// "Hello" == "hello" even though their hashes match under FC_IGNORE_CASE).
+					if (!_FC_LinesEqual(lineA, lineB, Config))
+						continue;
+
 					size_t k = 0, low = 1, high = LcsLength;
 					while (low <= high) {
 						size_t mid = low + (high - low) / 2;
@@ -1470,6 +1546,9 @@ extern "C" {
 	 * @param[out] OutputLength A pointer to a size_t that will receive the number of bytes read.
 	 * @param[out] Result A pointer to an FC_RESULT that will be set to indicate the outcome.
 	 * @return A pointer to a new, null-terminated buffer containing the file's content, or NULL on failure. The caller must free this memory.
+	 *
+	 * The file is read in fixed-size chunks to avoid single-call `ReadFile` limits and
+	 * reduce large transient allocation pressure.
 	 */
 	static inline char*
 		_FC_ReadFileContents(
@@ -1481,6 +1560,8 @@ extern "C" {
 		*Result = FC_OK;
 		HANDLE FileHandle = INVALID_HANDLE_VALUE;
 		char* Buffer = NULL;
+		_FC_BUFFER FileBuffer;
+		_FC_BufferInit(&FileBuffer, sizeof(char));
 
 		FileHandle = CreateFileW(
 			Path,
@@ -1510,41 +1591,51 @@ extern "C" {
 			goto cleanup;
 		}
 
-		size_t Length = (size_t)FileSize.QuadPart;
-		if (Length == 0)
-		{
-			// Return a valid, empty, null-terminated string for zero-length files.
-			*Result = FC_OK;
-			Buffer = _FC_StringDuplicateRange("", 0);
-			goto cleanup;
-		}
-		if (Length > MAXDWORD)
-		{
-			*Result = FC_ERROR_MEMORY; // File too large for a single ReadFile call
-			goto cleanup;
-		}
-
-		Buffer = (char*)HeapAlloc(GetProcessHeap(), 0, Length + 1);
-		if (Buffer == NULL)
+		size_t LengthHint = (size_t)FileSize.QuadPart;
+		if (LengthHint > 0 && !_FC_BufferEnsureCapacity(&FileBuffer, LengthHint))
 		{
 			*Result = FC_ERROR_MEMORY;
 			goto cleanup;
 		}
 
-		DWORD BytesRead = 0;
-		if (!ReadFile(FileHandle, Buffer, (DWORD)Length, &BytesRead, NULL) || BytesRead != Length)
 		{
-			*Result = FC_ERROR_IO;
-			HeapFree(GetProcessHeap(), 0, Buffer);
-			Buffer = NULL; // Ensure we return NULL on failure
-			goto cleanup;
+			enum { FC_READ_CHUNK = 64 * 1024 };
+			char ReadChunk[FC_READ_CHUNK];
+			for (;;)
+			{
+				DWORD BytesRead = 0;
+				if (!ReadFile(FileHandle, ReadChunk, FC_READ_CHUNK, &BytesRead, NULL))
+				{
+					*Result = FC_ERROR_IO;
+					goto cleanup;
+				}
+				if (BytesRead == 0)
+					break; // EOF
+
+				if (!_FC_BufferAppendRange(&FileBuffer, ReadChunk, (size_t)BytesRead))
+				{
+					*Result = FC_ERROR_MEMORY;
+					goto cleanup;
+				}
+			}
 		}
 
-		Buffer[Length] = '\0'; // Add the null terminator
-		*OutputLength = Length;
-		// *Result is already FC_OK
+		// Ensure null-termination.
+		if (!_FC_BufferEnsureCapacity(&FileBuffer, 1))
+		{
+			*Result = FC_ERROR_MEMORY;
+			goto cleanup;
+		}
+		((char*)FileBuffer.pData)[FileBuffer.Count] = '\0';
+
+		Buffer = (char*)FileBuffer.pData;
+		*OutputLength = FileBuffer.Count;
+		FileBuffer.pData = NULL;
+		FileBuffer.Count = 0;
+		FileBuffer.Capacity = 0;
 
 	cleanup:
+		_FC_BufferFree(&FileBuffer);
 		if (FileHandle != INVALID_HANDLE_VALUE)
 		{
 			CloseHandle(FileHandle);
@@ -1977,11 +2068,34 @@ extern "C" {
 	}
 
 	/**
+	 * @brief Returns TRUE if a path has a classic binary-extension used by fc.exe docs.
+	 * @internal
+	 */
+	static inline BOOL
+		_FC_HasBinaryExtension(_In_z_ const WCHAR* Path)
+	{
+		if (Path == NULL)
+			return FALSE;
+
+		const WCHAR* Dot = wcsrchr(Path, L'.');
+		if (Dot == NULL || Dot[1] == L'\0')
+			return FALSE;
+
+		return (_wcsicmp(Dot, L".exe") == 0 ||
+			_wcsicmp(Dot, L".com") == 0 ||
+			_wcsicmp(Dot, L".sys") == 0 ||
+			_wcsicmp(Dot, L".obj") == 0 ||
+			_wcsicmp(Dot, L".lib") == 0 ||
+			_wcsicmp(Dot, L".bin") == 0);
+	}
+
+	/**
 	 * @brief The internal core comparison dispatcher.
 	 *
 	 * This function selects the appropriate comparison strategy (text or binary) based
-	 * on the `Config->Mode`. For `FC_MODE_AUTO`, it uses `_FC_IsProbablyTextFileW` to
-	 * decide which strategy to use.
+	 * on the `Config->Mode`. For `FC_MODE_AUTO`, it first applies classic fc.exe-style
+	 * binary-extension rules and then falls back to `_FC_IsProbablyTextFileW` content
+	 * detection.
 	 * @internal
 	 * @param Path1 The canonical path to the first file.
 	 * @param Path2 The canonical path to the second file.
@@ -2008,7 +2122,13 @@ extern "C" {
 		case FC_MODE_AUTO:
 		default:
 		{
-			// Corrected order
+			// NOTE: AUTO mode is intentionally modernized to blend classic extension
+			// heuristics with content sniffing (extension check first, then detection).
+			// See README "Documented Differences from Windows fc.exe".
+			if (_FC_HasBinaryExtension(Path1) || _FC_HasBinaryExtension(Path2))
+				return _FC_CompareFilesBinary(Path1, Path2, Config);
+
+			// Otherwise, fall back to content-based detection.
 			BOOL isText1 = _FC_IsProbablyTextFileW(Path1);
 			BOOL isText2 = _FC_IsProbablyTextFileW(Path2);
 			if (isText1 && isText2)
