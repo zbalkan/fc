@@ -33,9 +33,13 @@ jobs:
 
       - name: Run tests
         run: |
-          $exe = "src\x64\Release\fc.test.exe"
-          & $exe
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Tests failed with exit code $LASTEXITCODE"
-            exit $LASTEXITCODE
+          $psi = [System.Diagnostics.ProcessStartInfo]::new("src\x64\Release\fc.test.exe")
+          $psi.UseShellExecute = $false
+          $psi.RedirectStandardOutput = $false
+          $psi.RedirectStandardError = $false
+          $p = [System.Diagnostics.Process]::Start($psi)
+          $p.WaitForExit()
+          if ($p.ExitCode -ne 0) {
+            Write-Error "Tests failed with exit code $($p.ExitCode)"
+            exit $p.ExitCode
           }
