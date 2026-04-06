@@ -662,6 +662,8 @@ WildcardFileCompare(
 
 	if (ContainsWildcard(Pattern1) && ContainsWildcard(Pattern2))
 	{
+		size_t ComparedPairCount = 0;
+
 		// Title-wild pairing: both sides are wildcards so match files by their
 		// base-name stem, e.g. "fc *.txt *.bak" pairs a.txt with a.bak.
 		BOOL* Used2 = (BOOL*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY,
@@ -752,6 +754,7 @@ WildcardFileCompare(
 			ConPrintW(hOut, L"\n\n");
 
 			FC_RESULT Result = FC_CompareFilesW(File1, File2, Config);
+			ComparedPairCount++;
 
 			switch (Result)
 			{
@@ -782,6 +785,18 @@ WildcardFileCompare(
 					OverallResult = -1;
 				break;
 			}
+		}
+
+		if (ComparedPairCount == 0)
+		{
+			HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+			ConPrintW(hOut, L"FC: no matching stem pairs found for ");
+			ConPrintW(hOut, Pattern1);
+			ConPrintW(hOut, L" and ");
+			ConPrintW(hOut, Pattern2);
+			ConPrintW(hOut, L"\n");
+			if (OverallResult == 0)
+				OverallResult = 1;
 		}
 
 		for (size_t m = 0; m < Exp2->Count; m++)

@@ -3,6 +3,8 @@
 // WideCharToMultiByte, ExitProcess
 #include <strsafe.h>     // StringCchLengthA/W, StringCchCopyW, StringCchCatW
 #include <pathcch.h>     // PathCchCombine, PathCchAddBackslash
+#include <string.h>      // strstr
+#include <stdlib.h>      // _wsystem
 #include "../fc/filecheck.h"   // FC_CONFIG, FC_RESULT, FC_OK, FC_DIFFERENT, FC_MODE_*, FC_IGNORE_*,
 // FileCheckCompareFilesUtf8()
 
@@ -1456,6 +1458,89 @@ static void Test_Regression_LBn_WindowLimitsMatch(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static BOOL ReadFileToBuffer(
+	_In_z_ const WCHAR* path,
+	_Out_writes_z_(outCap) char* outBuf,
+	_In_ DWORD outCap)
+{
+	HANDLE h = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	DWORD total = 0;
+	if (outCap > 0)
+		outBuf[0] = '\0';
+	while (outCap > 0 && total < outCap - 1)
+	{
+		DWORD bytesRead = 0;
+		char tmp[512];
+		if (!ReadFile(h, tmp, sizeof(tmp), &bytesRead, NULL) || bytesRead == 0)
+			break;
+		DWORD toCopy = bytesRead;
+		if (toCopy > outCap - 1 - total)
+			toCopy = outCap - 1 - total;
+		CopyMemory(outBuf + total, tmp, toCopy);
+		total += toCopy;
+	}
+	if (outCap > 0)
+		outBuf[total] = '\0';
+	CloseHandle(h);
+	return TRUE;
+}
+
+static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_left"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_right"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR leftB[MAX_LONG_PATH];
+	WCHAR rightA[MAX_LONG_PATH];
+	WCHAR rightB[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"alpha.txt", leftA);
+	ConcatPath(dirLeft, L"beta.txt", leftB);
+	ConcatPath(dirRight, L"gamma.bak", rightA);
+	ConcatPath(dirRight, L"delta.bak", rightB);
+
+	WRITE_STR_FILE(leftA, "left alpha\n");
+	WRITE_STR_FILE(leftB, "left beta\n");
+	WRITE_STR_FILE(rightA, "right gamma\n");
+	WRITE_STR_FILE(rightB, "right delta\n");
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	WCHAR modulePath[MAX_LONG_PATH];
+	WCHAR command[4096];
+
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_disjoint_output.txt"))) Throw(L"Combine fail", NULL);
+	if (!GetModuleFileNameW(NULL, modulePath, MAX_LONG_PATH)) Throw(L"Module path fail", NULL);
+	WCHAR* lastSlash = wcsrchr(modulePath, L'\\');
+	if (lastSlash == NULL) Throw(L"Module path fail", NULL);
+	lastSlash[1] = L'\0';
+	if (FAILED(StringCchCatW(modulePath, MAX_LONG_PATH, L"fc.exe"))) Throw(L"Combine fail", NULL);
+
+	if (FAILED(StringCchPrintfW(command, ARRAYSIZE(command),
+		L"\"%s\" \"%s\" \"%s\" > \"%s\" 2>&1",
+		modulePath, pattern1, pattern2, outputPath)))
+	{
+		Throw(L"Command build fail", NULL);
+	}
+
+	int exitCode = _wsystem(command);
+	char output[8192];
+	ASSERT_TRUE(exitCode != -1);
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode != 0);
+	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1526,6 +1611,7 @@ int wmain(void)
 	Test_Regression_AutoDetect_NullByteIsBinary(testDir);
 	Test_Regression_AutoDetect_TextContent_IsText(testDir);
 	Test_Regression_LBn_WindowLimitsMatch(testDir);
+	Test_Cli_DualWildcardDisjointStems(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
