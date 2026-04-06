@@ -64,12 +64,12 @@ ConPrintW(_In_ HANDLE hOut, _In_z_ const WCHAR* msg)
 }
 
  /**
- * @struct TEXT_DIFF_USER_DATA
- * @brief User data structure for text diff callback to access configuration flags.
+ * @struct CLI_CALLBACK_USER_DATA
+ * @brief User data shared by CLI diff callbacks.
  */
 typedef struct {
 	UINT Flags;              /**< Configuration flags (e.g., FC_SHOW_LINE_NUMS). */
-} TEXT_DIFF_USER_DATA;
+} CLI_CALLBACK_USER_DATA;
 
 /**
  * @brief Helper function to get a line from a buffer safely.
@@ -208,7 +208,7 @@ TextDiffCallback(
 	BOOL Abbreviated = FALSE;
 	if (Context->UserData != NULL)
 	{
-		UINT Flags = ((TEXT_DIFF_USER_DATA*)Context->UserData)->Flags;
+		UINT Flags = ((CLI_CALLBACK_USER_DATA*)Context->UserData)->Flags;
 		ShowLineNumbers = (Flags & FC_SHOW_LINE_NUMS) != 0;
 		Abbreviated = (Flags & FC_ABBREVIATED) != 0;
 	}
@@ -268,6 +268,9 @@ BinaryDiffCallback(
 	_In_ const FC_USER_CONTEXT* Context,
 	_In_ const FC_DIFF_BLOCK* Block)
 {
+	if (Context == NULL || Block == NULL || Context->Path1 == NULL || Context->Path2 == NULL)
+		return;
+
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	WCHAR buf[128];
 
@@ -287,6 +290,47 @@ BinaryDiffCallback(
 		swprintf_s(buf, 128, L"%08zX: %02X %02X\n",
 			Block->StartA, (unsigned int)(unsigned char)Block->EndA, (unsigned int)(unsigned char)Block->EndB);
 		ConPrintW(hOut, buf);
+	}
+}
+
+/**
+ * @brief Dispatches each diff block to the appropriate formatter.
+ *
+ * The selection is based on the actual diff block payload and callback context,
+ * not on the configured compare mode. This guarantees that FC_MODE_AUTO prints
+ * binary details when the library chooses binary comparison.
+ */
+static void
+DispatchDiffCallback(
+	_In_ const FC_USER_CONTEXT* Context,
+	_In_ const FC_DIFF_BLOCK* Block)
+{
+	if (Context == NULL || Block == NULL)
+		return;
+
+	switch (Block->Type)
+	{
+	case FC_DIFF_TYPE_SIZE:
+		BinaryDiffCallback(Context, Block);
+		break;
+
+	case FC_DIFF_TYPE_ADD:
+	case FC_DIFF_TYPE_DELETE:
+		TextDiffCallback(Context, Block);
+		break;
+
+	case FC_DIFF_TYPE_CHANGE:
+		// In binary comparisons, filecheck passes NULL line buffers and repurposes
+		// Start/End fields for byte offset/value data.
+		if (Context->Lines1 == NULL || Context->Lines2 == NULL)
+			BinaryDiffCallback(Context, Block);
+		else
+			TextDiffCallback(Context, Block);
+		break;
+
+	default:
+		// Unknown/none diff types are intentionally ignored.
+		break;
 	}
 }
 
@@ -939,7 +983,7 @@ wmain(
 	}
 
 	FC_CONFIG Config = { 0 }; // Initialize all fields to zero
-	TEXT_DIFF_USER_DATA TextUserData = { 0 }; // User data for text diff callback
+	CLI_CALLBACK_USER_DATA CallbackUserData = { 0 }; // User data for CLI diff callbacks
 
 	// Set non-zero defaults
 	Config.Mode = FC_MODE_AUTO;
@@ -1036,17 +1080,11 @@ wmain(
 		return -1;
 	}
 
-	if (Config.Mode == FC_MODE_BINARY)
-	{
-		Config.DiffCallback = BinaryDiffCallback;
-	}
-	else
-	{
-		Config.DiffCallback = TextDiffCallback;
-		// Pass flags to the text diff callback through UserData
-		TextUserData.Flags = Config.Flags;
-		Config.UserData = &TextUserData;
-	}
+	// Always use the dispatcher so mode AUTO can route each block format
+	// according to actual detected diff data.
+	Config.DiffCallback = DispatchDiffCallback;
+	CallbackUserData.Flags = Config.Flags;
+	Config.UserData = &CallbackUserData;
 
 	const WCHAR* File1 = FileArgs[0];
 	const WCHAR* File2 = FileArgs[1];
