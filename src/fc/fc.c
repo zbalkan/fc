@@ -69,6 +69,7 @@ ConPrintW(_In_ HANDLE hOut, _In_z_ const WCHAR* msg)
  */
 typedef struct {
 	UINT Flags;              /**< Configuration flags (e.g., FC_SHOW_LINE_NUMS). */
+	FC_MODE DecodeMode;      /**< Effective text decode mode for line rendering. */
 } CLI_CALLBACK_USER_DATA;
 
 /**
@@ -95,7 +96,8 @@ PrintOneLine(
 	_In_ HANDLE hOut,
 	_In_ const _FC_BUFFER* Lines,
 	_In_ size_t Index,
-	_In_ BOOL ShowLineNumbers)
+	_In_ BOOL ShowLineNumbers,
+	_In_ FC_MODE DecodeMode)
 {
 	const _FC_LINE* line = GetLine(Lines, Index);
 	if (line == NULL || line->Text == NULL)
@@ -107,14 +109,21 @@ PrintOneLine(
 		swprintf_s(numBuf, 16, L"%5zu:  ", Index + 1);
 		ConPrintW(hOut, numBuf);
 	}
-	int wLen = MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, NULL, 0);
+	UINT codePage = (DecodeMode == FC_MODE_TEXT_ASCII) ? CP_ACP : CP_UTF8;
+	DWORD utf8Flags = (codePage == CP_UTF8) ? MB_ERR_INVALID_CHARS : 0;
+	int wLen = MultiByteToWideChar(codePage, utf8Flags, line->Text, -1, NULL, 0);
+	if (wLen <= 0 && codePage == CP_UTF8)
+	{
+		codePage = CP_ACP;
+		wLen = MultiByteToWideChar(codePage, 0, line->Text, -1, NULL, 0);
+	}
 	if (wLen > 0)
 	{
 		WCHAR* wText = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (size_t)wLen * sizeof(WCHAR));
 		if (wText != NULL)
 		{
-			MultiByteToWideChar(CP_UTF8, 0, line->Text, -1, wText, wLen);
-			ConPrintW(hOut, wText);
+			if (MultiByteToWideChar(codePage, 0, line->Text, -1, wText, wLen) > 0)
+				ConPrintW(hOut, wText);
 			HeapFree(GetProcessHeap(), 0, wText);
 		}
 	}
@@ -130,11 +139,12 @@ PrintLines(
 	_In_ const _FC_BUFFER* Lines,
 	_In_ size_t Start,
 	_In_ size_t End,
-	_In_ BOOL ShowLineNumbers)
+	_In_ BOOL ShowLineNumbers,
+	_In_ FC_MODE DecodeMode)
 {
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	for (size_t i = Start; i < End; ++i)
-		PrintOneLine(hOut, Lines, i, ShowLineNumbers);
+		PrintOneLine(hOut, Lines, i, ShowLineNumbers, DecodeMode);
 }
 
 /**
@@ -151,7 +161,8 @@ PrintLinesAbbreviated(
 	_In_ const _FC_BUFFER* Lines,
 	_In_ size_t Start,
 	_In_ size_t End,
-	_In_ BOOL ShowLineNumbers)
+	_In_ BOOL ShowLineNumbers,
+	_In_ FC_MODE DecodeMode)
 {
 	HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
 	size_t Count = (End > Start) ? (End - Start) : 0;
@@ -160,14 +171,14 @@ PrintLinesAbbreviated(
 	{
 		// One or two lines: show all of them.
 		for (size_t i = Start; i < End; ++i)
-			PrintOneLine(hOut, Lines, i, ShowLineNumbers);
+			PrintOneLine(hOut, Lines, i, ShowLineNumbers, DecodeMode);
 	}
 	else
 	{
 		// Three or more: show first, "...", last.
-		PrintOneLine(hOut, Lines, Start, ShowLineNumbers);
+		PrintOneLine(hOut, Lines, Start, ShowLineNumbers, DecodeMode);
 		ConPrintW(hOut, L"...\n");
-		PrintOneLine(hOut, Lines, End - 1, ShowLineNumbers);
+		PrintOneLine(hOut, Lines, End - 1, ShowLineNumbers, DecodeMode);
 	}
 }
 
@@ -206,11 +217,14 @@ TextDiffCallback(
 
 	BOOL ShowLineNumbers = FALSE;
 	BOOL Abbreviated = FALSE;
+	FC_MODE DecodeMode = FC_MODE_AUTO;
 	if (Context->UserData != NULL)
 	{
-		UINT Flags = ((CLI_CALLBACK_USER_DATA*)Context->UserData)->Flags;
+		CLI_CALLBACK_USER_DATA* userData = (CLI_CALLBACK_USER_DATA*)Context->UserData;
+		UINT Flags = userData->Flags;
 		ShowLineNumbers = (Flags & FC_SHOW_LINE_NUMS) != 0;
 		Abbreviated = (Flags & FC_ABBREVIATED) != 0;
+		DecodeMode = userData->DecodeMode;
 	}
 
 	if (Block->Type == FC_DIFF_TYPE_CHANGE ||
@@ -227,9 +241,9 @@ TextDiffCallback(
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_DELETE)
 		{
 			if (Abbreviated)
-				PrintLinesAbbreviated(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+				PrintLinesAbbreviated(Lines1, Block->StartA, Block->EndA, ShowLineNumbers, DecodeMode);
 			else
-				PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers);
+				PrintLines(Lines1, Block->StartA, Block->EndA, ShowLineNumbers, DecodeMode);
 		}
 
 		// Print second file block
@@ -240,9 +254,9 @@ TextDiffCallback(
 		if (Block->Type == FC_DIFF_TYPE_CHANGE || Block->Type == FC_DIFF_TYPE_ADD)
 		{
 			if (Abbreviated)
-				PrintLinesAbbreviated(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+				PrintLinesAbbreviated(Lines2, Block->StartB, Block->EndB, ShowLineNumbers, DecodeMode);
 			else
-				PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers);
+				PrintLines(Lines2, Block->StartB, Block->EndB, ShowLineNumbers, DecodeMode);
 		}
 
 		// Print closing marker followed by a blank line (matching Windows fc.exe output).
@@ -1092,6 +1106,7 @@ wmain(
 	// according to actual detected diff data.
 	Config.DiffCallback = DispatchDiffCallback;
 	CallbackUserData.Flags = Config.Flags;
+	CallbackUserData.DecodeMode = (Config.Mode == FC_MODE_TEXT_ASCII) ? FC_MODE_TEXT_ASCII : FC_MODE_TEXT_UNICODE;
 	Config.UserData = &CallbackUserData;
 
 	const WCHAR* File1 = FileArgs[0];

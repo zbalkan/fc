@@ -1521,9 +1521,10 @@ static BOOL ResolveFcExePath(_Out_writes_z_(MAX_LONG_PATH) WCHAR* fcPath)
 	return GetFileAttributesW(fcPath) != INVALID_FILE_ATTRIBUTES;
 }
 
-static BOOL RunFcToOutputFile(
+static BOOL RunFcToOutputFileWithOptions(
 	_In_z_ const WCHAR* pattern1,
 	_In_z_ const WCHAR* pattern2,
+	_In_opt_z_ const WCHAR* options,
 	_In_z_ const WCHAR* outputPath,
 	_Out_ DWORD* exitCode)
 {
@@ -1532,7 +1533,16 @@ static BOOL RunFcToOutputFile(
 		return FALSE;
 
 	WCHAR cmdLine[4096];
-	if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+	if (options != NULL && options[0] != L'\0')
+	{
+		if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+			L"\"%s\" %s \"%s\" \"%s\"",
+			fcPath, options, pattern1, pattern2)))
+		{
+			return FALSE;
+		}
+	}
+	else if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
 		L"\"%s\" \"%s\" \"%s\"",
 		fcPath, pattern1, pattern2)))
 	{
@@ -1576,6 +1586,24 @@ static BOOL RunFcToOutputFile(
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess);
 	return ok;
+}
+
+static BOOL RunFcToOutputFile(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	return RunFcToOutputFileWithOptions(pattern1, pattern2, NULL, outputPath, exitCode);
+}
+
+static BOOL RunFcToOutputFileNoOptions(
+	_In_z_ const WCHAR* pattern1,
+	_In_z_ const WCHAR* pattern2,
+	_In_z_ const WCHAR* outputPath,
+	_Out_ DWORD* exitCode)
+{
+	return RunFcToOutputFile(pattern1, pattern2, outputPath, exitCode);
 }
 
 static void BuildLongSubdirName(_In_ int index, _Out_writes_z_(32) WCHAR* out)
@@ -1668,11 +1696,11 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 
 	DWORD exitCode = 0;
 	char output[12288];
-	BOOL ran = RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode);
+	BOOL ran = RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode);
 	BOOL readOk = ran ? ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)) : FALSE;
 	if (!ran || !readOk || exitCode != 0 || strstr(output, "Comparing files ") == NULL)
 	{
-		ASSERT_TRUE(RunFcToOutputFile(pattern1Prefixed, pattern2Prefixed, outputPath, &exitCode));
+		ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1Prefixed, pattern2Prefixed, outputPath, &exitCode));
 		ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	}
 	if (exitCode == 0 && strstr(output, "Comparing files ") != NULL)
@@ -1724,7 +1752,7 @@ static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_disjoint_output.txt"))) Throw(L"Combine fail", NULL);
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode != 0);
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
@@ -1763,7 +1791,7 @@ static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_partial_output.txt"))) Throw(L"Combine fail", NULL);
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 0);
 	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
@@ -1834,7 +1862,7 @@ static void Test_Cli_WildcardAllocFailureOnPathDuplication(const WCHAR* baseDir)
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"dup"));
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 2);
@@ -1875,11 +1903,150 @@ static void Test_Cli_WildcardAllocFailureOnGrowth(const WCHAR* baseDir)
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", L"grow"));
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileNoOptions(pattern1, pattern2, outputPath, &exitCode));
 	ASSERT_TRUE(SetEnvironmentVariableW(L"FC_WILDCARD_FAIL_STEP", NULL));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 2);
 	ASSERT_TRUE(strstr(output, "Error: memory allocation failure during wildcard expansion.") != NULL);
+}
+
+static void Test_Cli_LineOutput_Utf8Multibyte_NU(const WCHAR* baseDir)
+{
+	WCHAR file1[MAX_LONG_PATH];
+	WCHAR file2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	ConcatPath(baseDir, L"cli_utf8_multibyte_left.txt", file1);
+	ConcatPath(baseDir, L"cli_utf8_multibyte_right.txt", file2);
+	ConcatPath(baseDir, L"cli_utf8_multibyte_output.txt", outputPath);
+
+	const unsigned char leftUtf8[] = { 'c', 'a', 'f', 0xC3, 0xA9, ' ', 0xE2, 0x98, 0x95, '\n' };
+	const unsigned char rightUtf8[] = { 'c', 'a', 'f', 'e', ' ', 0xE2, 0x98, 0x95, '\n' };
+	ASSERT_TRUE(WriteDataFile(file1, leftUtf8, (DWORD)sizeof(leftUtf8)));
+	ASSERT_TRUE(WriteDataFile(file2, rightUtf8, (DWORD)sizeof(rightUtf8)));
+
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /U", outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 1);
+	ASSERT_TRUE(strstr(output, "    1:  caf\xc3\xa9 \xe2\x98\x95") != NULL);
+}
+
+static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
+{
+	WCHAR file1[MAX_LONG_PATH];
+	WCHAR file2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	ConcatPath(baseDir, L"cli_ansi_bytes_left.txt", file1);
+	ConcatPath(baseDir, L"cli_ansi_bytes_right.txt", file2);
+	ConcatPath(baseDir, L"cli_ansi_bytes_output.txt", outputPath);
+
+	// Pick a non-ASCII sequence representable in current ACP without relying on
+	// specific glyphs (locale-agnostic for SBCS/DBCS/UTF-8 ACP configurations).
+	char acpBytes[8] = { 0 };
+	int acpLen = 0;
+
+	// 1) Prefer a true "extended single-byte" ACP byte when available.
+	for (int b = 0x80; b <= 0xFF && acpLen == 0; ++b)
+	{
+		char oneByte[2] = { (char)b, '\0' };
+		WCHAR wideBuf[2] = { 0 };
+		int wideLen = MultiByteToWideChar(CP_ACP, 0, oneByte, -1, wideBuf, ARRAYSIZE(wideBuf));
+		if (wideLen <= 1 || wideBuf[0] == L'X' || wideBuf[0] < 0x20)
+			continue;
+
+		BOOL usedDefaultChar = FALSE;
+		char roundTrip[4] = { 0 };
+		int roundTripLen = WideCharToMultiByte(
+			CP_ACP,
+			WC_NO_BEST_FIT_CHARS,
+			wideBuf,
+			1,
+			roundTrip,
+			ARRAYSIZE(roundTrip),
+			NULL,
+			&usedDefaultChar);
+		if (!usedDefaultChar && roundTripLen == 1 && (unsigned char)roundTrip[0] == (unsigned char)b)
+		{
+			acpBytes[0] = (char)b;
+			acpLen = 1;
+		}
+	}
+
+	// 2) If no single-byte extended value exists (e.g., ACP=UTF-8), probe a
+	// broader set of Unicode code points and keep the first exact ACP encoding.
+	if (acpLen == 0)
+	{
+		static const WCHAR kCandidates[] = {
+			0x00E9, // é
+			0x00F1, // ñ
+			0x03A9, // Ω
+			0x0416, // Ж
+			0x4E2D, // 中
+			0x20AC, // €
+		};
+
+		for (size_t i = 0; i < ARRAYSIZE(kCandidates) && acpLen == 0; ++i)
+		{
+			WCHAR candidate[2] = { kCandidates[i], L'\0' };
+			BOOL usedDefaultChar = FALSE;
+			char encoded[8] = { 0 };
+			int encodedLen = WideCharToMultiByte(
+				CP_ACP,
+				WC_NO_BEST_FIT_CHARS,
+				candidate,
+				1,
+				encoded,
+				ARRAYSIZE(encoded),
+				NULL,
+				&usedDefaultChar);
+			if (encodedLen <= 0 || usedDefaultChar)
+				continue;
+
+			BOOL badByte = FALSE;
+			for (int bi = 0; bi < encodedLen; ++bi)
+			{
+				if (encoded[bi] == '\0' || encoded[bi] == '\r' || encoded[bi] == '\n')
+				{
+					badByte = TRUE;
+					break;
+				}
+			}
+			if (badByte)
+				continue;
+
+			WCHAR roundTripWide[4] = { 0 };
+			int roundTripWideLen = MultiByteToWideChar(CP_ACP, 0, encoded, encodedLen, roundTripWide, ARRAYSIZE(roundTripWide));
+			if (roundTripWideLen <= 0 || roundTripWide[0] == L'X')
+				continue;
+
+			CopyMemory(acpBytes, encoded, (SIZE_T)encodedLen);
+			acpLen = encodedLen;
+		}
+	}
+
+	ASSERT_TRUE(acpLen > 0);
+
+	unsigned char left[16] = { 0 };
+	ASSERT_TRUE((size_t)acpLen + 1 <= ARRAYSIZE(left));
+	CopyMemory(left, acpBytes, (SIZE_T)acpLen);
+	left[acpLen] = '\n';
+
+	const unsigned char right[] = { 'X', '\n' };
+	ASSERT_TRUE(WriteDataFile(file1, left, (DWORD)(acpLen + 1)));
+	ASSERT_TRUE(WriteDataFile(file2, right, (DWORD)sizeof(right)));
+
+	DWORD exitCode = 0;
+	char output[8192];
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /L", outputPath, &exitCode));
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 1);
+
+	// Validate `/N /L` path with ACP bytes without depending on specific block
+	// rendering details, which vary across environments.
+	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
+	ASSERT_TRUE(strstr(output, "FC: no differences encountered") == NULL);
+	ASSERT_TRUE(output[0] != '\0');
 }
 
 int wmain(void)
@@ -1958,6 +2125,8 @@ int wmain(void)
 	Test_Cli_PositionalWildcardCountMismatchMarksDifferent(testDir);
 	Test_Cli_WildcardAllocFailureOnPathDuplication(testDir);
 	Test_Cli_WildcardAllocFailureOnGrowth(testDir);
+	Test_Cli_LineOutput_Utf8Multibyte_NU(testDir);
+	Test_Cli_LineOutput_AnsiExtendedBytes_NL(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
