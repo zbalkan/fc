@@ -1893,7 +1893,21 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 	ASSERT_TRUE(RunFcToOutputFile(file1, file2, L"/N /L ", outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
-	ASSERT_TRUE(strstr(output, "    1:  \xc3\xa9") != NULL);
+
+	// Validate ACP decoding without assuming a specific ANSI code page (e.g. CP1252).
+	// Convert 0xE9 via current ACP -> UTF-16 -> UTF-8, then match that emitted text.
+	char acpByteStr[2] = { (char)0xE9, '\0' };
+	WCHAR wideChar[2] = { 0 };
+	int wideLen = MultiByteToWideChar(CP_ACP, 0, acpByteStr, -1, wideChar, ARRAYSIZE(wideChar));
+	ASSERT_TRUE(wideLen > 1);
+
+	char utf8Char[8] = { 0 };
+	int utf8Len = WideCharToMultiByte(CP_UTF8, 0, wideChar, -1, utf8Char, ARRAYSIZE(utf8Char), NULL, NULL);
+	ASSERT_TRUE(utf8Len > 1);
+
+	char expectedLine[64] = { 0 };
+	ASSERT_TRUE(SUCCEEDED(StringCchPrintfA(expectedLine, ARRAYSIZE(expectedLine), "    1:  %s", utf8Char)));
+	ASSERT_TRUE(strstr(output, expectedLine) != NULL);
 }
 
 int wmain(void)
