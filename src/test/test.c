@@ -1533,9 +1533,18 @@ static BOOL RunFcToOutputFileWithOptions(
 		return FALSE;
 
 	WCHAR cmdLine[4096];
-	if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
-		L"\"%s\" %s\"%s\" \"%s\"",
-		fcPath, (options != NULL) ? options : L"", pattern1, pattern2)))
+	if (options != NULL && options[0] != L'\0')
+	{
+		if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+			L"\"%s\" %s \"%s\" \"%s\"",
+			fcPath, options, pattern1, pattern2)))
+		{
+			return FALSE;
+		}
+	}
+	else if (FAILED(StringCchPrintfW(cmdLine, ARRAYSIZE(cmdLine),
+		L"\"%s\" \"%s\" \"%s\"",
+		fcPath, pattern1, pattern2)))
 	{
 		return FALSE;
 	}
@@ -1872,12 +1881,14 @@ static void Test_Cli_LineOutput_Utf8Multibyte_NU(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"cli_utf8_multibyte_right.txt", file2);
 	ConcatPath(baseDir, L"cli_utf8_multibyte_output.txt", outputPath);
 
-	WRITE_STR_FILE(file1, "café ☕\n");
-	WRITE_STR_FILE(file2, "cafe ☕\n");
+	const unsigned char leftUtf8[] = { 'c', 'a', 'f', 0xC3, 0xA9, ' ', 0xE2, 0x98, 0x95, '\n' };
+	const unsigned char rightUtf8[] = { 'c', 'a', 'f', 'e', ' ', 0xE2, 0x98, 0x95, '\n' };
+	ASSERT_TRUE(WriteDataFile(file1, leftUtf8, (DWORD)sizeof(leftUtf8)));
+	ASSERT_TRUE(WriteDataFile(file2, rightUtf8, (DWORD)sizeof(rightUtf8)));
 
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /U ", outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /U", outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
 	ASSERT_TRUE(strstr(output, "    1:  caf\xc3\xa9 \xe2\x98\x95") != NULL);
@@ -1989,7 +2000,7 @@ static void Test_Cli_LineOutput_AnsiExtendedBytes_NL(const WCHAR* baseDir)
 
 	DWORD exitCode = 0;
 	char output[8192];
-	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /L ", outputPath, &exitCode));
+	ASSERT_TRUE(RunFcToOutputFileWithOptions(file1, file2, L"/N /L", outputPath, &exitCode));
 	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
 	ASSERT_TRUE(exitCode == 1);
 
