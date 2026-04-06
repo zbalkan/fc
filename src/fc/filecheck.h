@@ -992,9 +992,12 @@ extern "C" {
 			size_t LowLenA = 0, LowLenB = 0;
 			char* LowA = _FC_StringToLowerUnicode(lineA->Text, lineA->Length, &LowLenA);
 			char* LowB = _FC_StringToLowerUnicode(lineB->Text, lineB->Length, &LowLenB);
-			BOOL Equal = (LowA != NULL && LowB != NULL &&
-				LowLenA == LowLenB &&
-				memcmp(LowA, LowB, LowLenA) == 0);
+			// On allocation failure, both pointers are freed safely by _FC_HeapFree (which
+			// accepts NULL).  Returning FALSE is intentionally conservative: under OOM we
+			// report extra diffs rather than silently masking real differences.
+			BOOL Equal = FALSE;
+			if (LowA != NULL && LowB != NULL && LowLenA == LowLenB)
+				Equal = (memcmp(LowA, LowB, LowLenA) == 0);
 			_FC_HeapFree(LowA);
 			_FC_HeapFree(LowB);
 			return Equal;
