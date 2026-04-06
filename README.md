@@ -36,6 +36,7 @@ The entire codebase is written in pure C and has no external dependencies beyond
     *   `/W` - Ignore whitespace differences
     *   `/nnnn` - Set resync line threshold (default: 2)
 *   **Text Diff Output**: Displays line-by-line differences in a format compatible with Windows `fc.exe`, showing difference blocks with proper sectioning using asterisk markers.
+*   **Wildcard Support**: Both input file arguments may use `*` or `?` wildcards to compare matching pairs (see examples below).
 
 ---
 
@@ -58,7 +59,7 @@ fc.exe [options] <file1> <file2>
 | `/B`    | Binary comparison |
 | `/C`    | Case-insensitive text comparison |
 | `/L`    | ASCII text comparison |
-| `/LBn`  | Set internal buffer size for text lines (e.g., `/LB200`; default: 100) |
+| `/LBn`  | Set maximum line-index distance for resync matching (e.g., `/LB200`; default: 100) |
 | `/N`    | Show line numbers in text mode |
 | `/T`    | Do not expand tabs to spaces |
 | `/U`    | Unicode-aware text comparison |
@@ -97,6 +98,9 @@ fc.exe /A file1.txt file2.txt
 
 # Wildcard comparison (compares matching file pairs across directories)
 fc.exe /B dir1\*.dll dir2\*.dll
+
+# Error handling for files not found
+fc.exe *.xyz *.abc   # Will report “FC: no files found for ...” if no matches
 ```
 
 ### Exit Codes
@@ -122,14 +126,13 @@ Modified line in file 2
 Different content in file 2
 *****
 ```
-
 The `/N` flag adds line numbers to each line of output. The `/A` flag abbreviates long diff blocks to show only the first and last line with `...` for omitted content.
 
 ### Using the `filecheck.h` Library
 
 To use the library in your own project, copy `src/fc/filecheck.h` into your source tree and include it.
 
-**Important:** Because the library uses native API functions, any project that includes `filecheck.h` must be linked with `ntdll.lib`. In Visual Studio, add this in **Project Properties > Linker > Input > Additional Dependencies**.
+**Important:** Because the library uses native API functions, any project that includes `filecheck.h` must be linked with `ntdll.lib`.
 
 #### Library API
 
@@ -254,9 +257,16 @@ CI runs automatically on every push and pull request using GitHub Actions (MSVC 
 
 To keep behavior explicit for maintainers and users, this project records intentional (or currently accepted) differences from Microsoft `fc.exe`:
 
-- **`/OFF` and `/OFFLINE` are accepted as compatibility switches but currently act as no-ops** in the CLI implementation.
-- **`/LBn` is implemented as a bounded resynchronization window heuristic in the LCS matcher**, not as a strict legacy internal text-buffer emulation.
-- **`FC_MODE_AUTO` uses extension-based binary detection first and then content sniffing**, which is intentionally modernized behavior for general use.
+- **Wildcard matching**: Both file arguments support wildcards and match by file "stem"; error/warning reporting aligns to Windows behavior, but may differ for partial matches or ordering.
+- **Output redirection**: Output is fully compatible with piping/redirection to files or CI environments, falling back to UTF-8 output if no console is present.
+- **`/OFF` and `/OFFLINE`**: Accepted as compatibility switches but currently act as no-ops in the CLI implementation.
+- **`/LBn`**: Implemented as a bounded resynchronization window heuristic in the LCS matcher, not as a strict legacy internal text-buffer emulation.
+- **`FC_MODE_AUTO`**: Uses an ordered, content-based heuristic, not extension-based defaults: BOM recognized as text, null bytes as binary, ≥90% printable as text. This is a modernized/safer behavior compared to Windows.
+- **Alternate Data Streams**: Files or paths containing `:` (ADS) are explicitly rejected.
+- **Tab Handling**: Expands tab characters to true 8-column stops (not fixed 4-spaces), matching ReactOS and Windows results.
+- **Whitespace Ignore**: `/W` compresses internal runs of whitespace, trims ends, and matches file content accordingly (not simply strips all whitespace).
+- **Case Ignoring and Unicode**: Unicode-aware, locale-neutral case folding for non-ASCII text when `/U` and `/C` are used together.
+- **Error output**: Exit codes and error reporting fit POSIX conventions, not just Windows.
 
 When these behaviors change, please update this section and the corresponding inline code notes in `src/fc/fc.c` and `src/fc/filecheck.h`.
 
