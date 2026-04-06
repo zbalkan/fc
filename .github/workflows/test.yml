@@ -34,7 +34,7 @@ jobs:
       - name: Run tests
         run: |
           $exe = "src\x64\Release\fc.test.exe"
-          & $exe
+          & $exe 2>&1
           if ($LASTEXITCODE -ne 0) {
             Write-Error "Tests failed with exit code $LASTEXITCODE"
             exit $LASTEXITCODE

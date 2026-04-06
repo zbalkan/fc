@@ -1,5 +1,5 @@
 #include <windows.h>    // WinAPI: HANDLE, DWORD, BOOL, WCHAR, CreateFileW, WriteFile, CloseHandle,
-// GetTempPathW, CreateDirectoryW, GetStdHandle, WriteConsoleA, WriteConsoleW,
+// GetTempPathW, CreateDirectoryW, GetStdHandle, WriteConsoleW,
 // WideCharToMultiByte, ExitProcess
 #include <strsafe.h>     // StringCchLengthA/W, StringCchCopyW, StringCchCatW
 #include <pathcch.h>     // PathCchCombine, PathCchAddBackslash
@@ -13,10 +13,56 @@ const int UTF8_BUFFER_SIZE = MAX_LONG_PATH * 4;
 int FAILURE = 0;
 int SUCCESS = 0;
 
+/**
+ * @brief Writes a wide string to the given handle.
+ *
+ * Tries WriteConsoleW first (works for interactive consoles).  When the
+ * handle is redirected (e.g. a CI pipe), WriteConsoleW fails silently, so
+ * this function falls back to converting the text to UTF-8 and using
+ * WriteFile, which works for any handle type.
+ */
+static void WriteW(_In_ HANDLE h, _In_z_ const WCHAR* msg)
+{
+	DWORD written;
+	// cch is needed for WriteConsoleW, which requires an explicit character count
+	// and does not accept -1 for null-terminated strings.
+	DWORD cch = (DWORD)wcslen(msg);
+	if (!WriteConsoleW(h, msg, cch, &written, NULL))
+	{
+		// stdout is redirected (e.g. a CI pipe) - convert to UTF-8 and use WriteFile.
+		// Passing -1 as the source length tells WideCharToMultiByte to process the
+		// entire null-terminated string; the returned byte count then includes the
+		// null terminator, so we subtract 1 when calling WriteFile.
+		// The function is called twice (two-pass): first with a NULL output buffer to
+		// get the required size, then again to perform the actual conversion.
+		int bytes = WideCharToMultiByte(CP_UTF8, 0, msg, -1, NULL, 0, NULL, NULL);
+		if (bytes > 1) // bytes == 1 means only the null terminator; bytes == 0 means error
+		{
+			// Use a stack buffer for the common case to avoid heap allocation.
+			char stack[1024];
+			char* buf;
+			if (bytes <= (int)sizeof(stack))
+			{
+				buf = stack;
+			}
+			else
+			{
+				buf = (char*)HeapAlloc(GetProcessHeap(), 0, (SIZE_T)bytes);
+				if (!buf) return; // OOM: cannot write output; fail silently
+			}
+			// A second WideCharToMultiByte failure here is theoretically possible
+			// but practically impossible given the size was just computed above.
+			if (WideCharToMultiByte(CP_UTF8, 0, msg, -1, buf, bytes, NULL, NULL) > 0)
+				WriteFile(h, buf, (DWORD)(bytes - 1), &written, NULL); // -1: exclude null terminator
+			if (buf != stack)
+				HeapFree(GetProcessHeap(), 0, buf);
+		}
+	}
+}
+
 #define ASSERT_TRUE(expr) \
     do { \
         HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); \
-        DWORD w; \
         WCHAR funcNameW[128]; \
         WCHAR fileW[256]; \
         WCHAR _lineW[16]; \
@@ -29,21 +75,20 @@ int SUCCESS = 0;
             StringCchCopyW(_exprW, 512, L"<expression>"); \
         if (!(expr)) { \
             swprintf_s(_lineW, 16, L"%d", __LINE__); \
-            WriteConsoleW(h, L"Test FAILED: ", 13, &w, NULL); \
-            WriteConsoleW(h, funcNameW, (DWORD)wcslen(funcNameW), &w, NULL); \
-            WriteConsoleW(h, L"\n  Assertion failed: ", 21, &w, NULL); \
-            WriteConsoleW(h, _exprW, (DWORD)wcslen(_exprW), &w, NULL); \
-            WriteConsoleW(h, L"\n  File: ", 9, &w, NULL); \
-            WriteConsoleW(h, fileW, (DWORD)wcslen(fileW), &w, NULL); \
-            WriteConsoleW(h, L", Line: ", 8, &w, NULL); \
-            WriteConsoleW(h, _lineW, (DWORD)wcslen(_lineW), &w, NULL); \
-            WriteConsoleW(h, L"\n\n", 2, &w, NULL); \
+            WriteW(h, L"Test FAILED: "); \
+            WriteW(h, funcNameW); \
+            WriteW(h, L"\n  Assertion failed: "); \
+            WriteW(h, _exprW); \
+            WriteW(h, L"\n  File: "); \
+            WriteW(h, fileW); \
+            WriteW(h, L", Line: "); \
+            WriteW(h, _lineW); \
+            WriteW(h, L"\n\n"); \
 			FAILURE++; \
-            /*ExitProcess(1);*/ \
         } else { \
-            WriteConsoleW(h, L"Test PASSED: ", 13, &w, NULL); \
-            WriteConsoleW(h, funcNameW, (DWORD)wcslen(funcNameW), &w, NULL); \
-            WriteConsoleW(h, L"\n", 1, &w, NULL); \
+            WriteW(h, L"Test PASSED: "); \
+            WriteW(h, funcNameW); \
+            WriteW(h, L"\n"); \
 			SUCCESS++; \
         } \
     } while(0)
@@ -52,10 +97,9 @@ int SUCCESS = 0;
 static void Throw(_In_z_ const WCHAR* msg, _In_opt_z_ const WCHAR* path)
 {
 	HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
-	DWORD w;
-	WriteConsoleW(h, msg, (DWORD)wcslen(msg), &w, NULL);
-	if (path) { WriteConsoleW(h, L": ", 2, &w, NULL); WriteConsoleW(h, path, (DWORD)wcslen(path), &w, NULL); }
-	WriteConsoleW(h, L"\r\n", 2, &w, NULL);
+	WriteW(h, msg);
+	if (path) { WriteW(h, L": "); WriteW(h, path); }
+	WriteW(h, L"\r\n");
 	ExitProcess(1);
 }
 
@@ -711,7 +755,7 @@ static void Test_VeryLargeFile(const WCHAR* baseDir)
 		const size_t fileSize = 1024 * 1024 * 5; // 5 MB
 		buffer = (char*)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, fileSize);
 		if (!buffer) {
-			WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L"Skipping Test_VeryLargeFile: Not enough memory.\n", 52, NULL, NULL);
+			WriteW(GetStdHandle(STD_OUTPUT_HANDLE), L"Skipping Test_VeryLargeFile: Not enough memory.\n");
 			// Set to TRUE to pass the skipped test
 			testResult = TRUE;
 			break;
@@ -723,7 +767,7 @@ static void Test_VeryLargeFile(const WCHAR* baseDir)
 		}
 		if (!WriteDataFile(p1, buffer, (DWORD)fileSize)) {
 			// Can't use Throw here as we need to clean up.
-			WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L"Test FAILED: Test_VeryLargeFile\n  Could not write large file.\n\n", 64, NULL, NULL);
+			WriteW(GetStdHandle(STD_OUTPUT_HANDLE), L"Test FAILED: Test_VeryLargeFile\n  Could not write large file.\n\n");
 			FAILURE++;
 			break;
 		}
@@ -1151,21 +1195,21 @@ int wmain(void)
 	Test_TextAscii_LineNumberAccuracy(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
-	WriteConsoleW(hConsole, L"\n\n", 2, NULL, NULL);
-	WriteConsoleW(hConsole, L"Tests completed\n", 17, NULL, NULL);
+	WriteW(hConsole, L"\n\n");
+	WriteW(hConsole, L"Tests completed\n");
 
 	if (FAILURE == 0) {
-		WriteConsoleW(GetStdHandle(STD_OUTPUT_HANDLE), L"All tests passed successfully.\n", 30, NULL, NULL);
+		WriteW(hConsole, L"All tests passed successfully.\n");
 		return 0;
 	}
 	else {
 		int total = FAILURE + SUCCESS;
 		WCHAR msg[128];
 		swprintf_s(msg, sizeof(msg) / sizeof(WCHAR), L"%d/%d failed\n", FAILURE, total);
-		WriteConsoleW(hConsole, msg, (DWORD)wcslen(msg), NULL, NULL);
+		WriteW(hConsole, msg);
 
 		swprintf_s(msg, sizeof(msg) / sizeof(WCHAR), L"%d/%d passed\n", SUCCESS, total);
-		WriteConsoleW(hConsole, msg, (DWORD)wcslen(msg), NULL, NULL);
+		WriteW(hConsole, msg);
 		return 1;
 	}
 }
