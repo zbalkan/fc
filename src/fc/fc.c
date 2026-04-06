@@ -1020,6 +1020,7 @@ wmain(
 	Config.Mode = FC_MODE_AUTO;
 	Config.ResyncLines = 2;
 	Config.BufferLines = 100;
+	Config.MaxTextFileBytes = (size_t)FC_DEFAULT_MAX_TEXT_FILE_BYTES;
 
 	// Options may appear anywhere in the argument list — before, between, or
 	// after the two file paths — matching Windows fc.exe behaviour.

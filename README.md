@@ -78,6 +78,15 @@ fc.exe [options] <file1> <file2>
 > This is an intentional design decision to improve safety and correctness when
 > comparing files without an explicit mode flag. Use `/L`, `/U`, or `/B` to override
 > the automatic selection.
+>
+> **Large-file safeguard:**
+> To avoid pathological memory usage in text mode, very large files are compared
+> in binary mode once either side exceeds the configured text-size ceiling
+> (`FC_CONFIG.MaxTextFileBytes`, default 128 MiB). This applies in explicit text
+> modes as well as auto mode.
+> For large binary comparisons, the implementation also switches from memory-mapped
+> I/O to streamed 1 MiB micro-batches with sequential-read hints to reduce cache
+> churn and working-set spikes.
 
 **Examples:**
 ```sh
