@@ -814,6 +814,9 @@ static void Test_MixedLineEndings(const WCHAR* baseDir)
 
 static void Test_NoFinalNewline(const WCHAR* baseDir)
 {
+	// Windows fc.exe text mode treats "Line1\n" and "Line1" as identical: both
+	// parse to a single line containing "Line1". The trailing newline is a line
+	// terminator, not part of the content, so its absence is not a difference.
 	TEST_PATHS tp = AllocTestPaths();
 	ConcatPath(baseDir, L"final_newline.txt", tp.p1);
 	ConcatPath(baseDir, L"no_final_newline.txt", tp.p2);
@@ -823,7 +826,7 @@ static void Test_NoFinalNewline(const WCHAR* baseDir)
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &testCtx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
-	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
 	FreeTestPaths(&tp);
 }
 
@@ -1135,6 +1138,325 @@ static void Test_TextAscii_LineNumberAccuracy(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_BinarySizeDiff_SizeOnlyCallback(const WCHAR* baseDir)
+{
+	// File1 is a prefix of File2: identical bytes up to shorter file's end.
+	// Binary comparison must report ONLY a size-difference callback, with no
+	// byte-mismatch callbacks for the common prefix (ReactOS behavior).
+	unsigned char d1[] = { 1, 2, 3 };
+	unsigned char d2[] = { 1, 2, 3, 4 };
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"bszo1.dat", tp.p1);
+	ConcatPath(baseDir, L"bszo2.dat", tp.p2);
+	if (!WriteDataFile(tp.p1, d1, sizeof(d1))) Throw(L"write bin failed", tp.p1);
+	if (!WriteDataFile(tp.p2, d2, sizeof(d2))) Throw(L"write bin failed", tp.p2);
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_BINARY, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	// Exactly one callback: the size difference.  No byte-mismatch callbacks
+	// because the common prefix bytes are identical.
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_SIZE);
+	FreeTestPaths(&tp);
+}
+
+static void Test_BinarySizeDiff_ContentAndSizeCallbacks(const WCHAR* baseDir)
+{
+	// Files differ in both content AND size.  ReactOS behavior: byte-level
+	// mismatches are reported first (in offset order), followed by the size
+	// difference.  The size-diff callback must be the LAST one.
+	unsigned char d1[] = { 9, 2, 3 };
+	unsigned char d2[] = { 1, 2, 3, 4 };
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"bcas1.dat", tp.p1);
+	ConcatPath(baseDir, L"bcas2.dat", tp.p2);
+	if (!WriteDataFile(tp.p1, d1, sizeof(d1))) Throw(L"write bin failed", tp.p1);
+	if (!WriteDataFile(tp.p2, d2, sizeof(d2))) Throw(L"write bin failed", tp.p2);
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_BINARY, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	// Two callbacks: byte mismatch at offset 0 first, then size difference.
+	ASSERT_TRUE(ctx.CallbackCount == 2);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE); // byte mismatch first
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 0);                 // at offset 0
+	ASSERT_TRUE(ctx.Blocks[1].Type == FC_DIFF_TYPE_SIZE);   // size diff last
+	FreeTestPaths(&tp);
+}
+
+static void Test_EmptyVsNonEmpty_Text(const WCHAR* baseDir)
+{
+	// Empty file A vs non-empty file B must report FC_DIFFERENT.
+	// Windows fc.exe reports "FC: no differences encountered" for two identical
+	// files and shows the diff for differing ones; an empty file clearly differs
+	// from one with content.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"empty_a2.txt", tp.p1);
+	ConcatPath(baseDir, L"nonempty_b.txt", tp.p2);
+	HANDLE h = CreateFileW(tp.p1, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+	WRITE_STR_FILE(tp.p2, "Line1\nLine2\n");
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	FreeTestPaths(&tp);
+}
+
+static void Test_NonEmptyVsEmpty_Text(const WCHAR* baseDir)
+{
+	// Non-empty file A vs empty file B must report FC_DIFFERENT.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"nonempty_a.txt", tp.p1);
+	ConcatPath(baseDir, L"empty_b2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "Line1\nLine2\n");
+	HANDLE h = CreateFileW(tp.p2, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	FreeTestPaths(&tp);
+}
+
+static void Test_CaseInsensitive_Unicode(const WCHAR* baseDir)
+{
+	// FC_MODE_TEXT_UNICODE + FC_IGNORE_CASE must match lines that differ only in
+	// Unicode case, including multi-byte sequences (e.g. E-acute: U+00C9 vs U+00E9).
+	// "CAFÉ" (UTF-8: 43 41 46 C3 89) vs "café" (UTF-8: 63 61 66 C3 A9).
+	// Both lowercase to "café", so lines are equal under FC_IGNORE_CASE.
+	const char* upper = "CAF\xC3\x89\n"; // "CAFÉ" in UTF-8
+	const char* lower = "caf\xC3\xa9\n"; // "café" in UTF-8
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"uni_ci1.txt", tp.p1);
+	ConcatPath(baseDir, L"uni_ci2.txt", tp.p2);
+	if (!WriteDataFile(tp.p1, upper, (DWORD)strlen(upper))) Throw(L"write failed", tp.p1);
+	if (!WriteDataFile(tp.p2, lower, (DWORD)strlen(lower))) Throw(L"write failed", tp.p2);
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_UNICODE, FC_IGNORE_CASE, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	// Negative case: genuinely different Unicode content must still be FC_DIFFERENT
+	// under FC_IGNORE_CASE.  "CAFÉ" and "coffée" do not match even after lowercasing.
+	const char* other = "coff\xC3\xa9\n"; // "coffée" in UTF-8, not equal to "café"
+	if (!WriteDataFile(tp.p2, other, (DWORD)strlen(other))) Throw(L"write failed", tp.p2);
+	{
+		DIFF_TEST_CONTEXT ctx2 = { 0 };
+		FC_CONFIG cfg2 = MakeTestConfig(FC_MODE_TEXT_UNICODE, FC_IGNORE_CASE, &ctx2);
+		ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg2) == FC_DIFFERENT);
+	}
+	FreeTestPaths(&tp);
+}
+
+static void Test_WhitespaceAndTabCompress(const WCHAR* baseDir)
+{
+	// Under /W, tabs are first expanded to spaces (8-column stops), then all
+	// whitespace runs are compressed to a single space.  This means a tab and
+	// any number of spaces between two tokens are treated as equivalent.
+	// "A\tB" -> expand tab (tab at col 1 -> 7 spaces) -> "A       B"
+	//        -> /W compress -> "A B"
+	// "A B"  -> /W compress -> "A B"
+	// Both normalise to "A B", so the lines are equal.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"ws_tab1.txt", tp.p1);
+	ConcatPath(baseDir, L"ws_tab2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "A\tB\n");
+	WRITE_STR_FILE(tp.p2, "A B\n"); // single space
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, FC_IGNORE_WS, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	FreeTestPaths(&tp);
+}
+
+static void Test_TabAtMidPosition(const WCHAR* baseDir)
+{
+	// Tab stop calculation must account for the column position of the tab
+	// character, not just insert a fixed number of spaces.
+	// "AB\tC": tab is at column 2 (after 'A' and 'B').
+	// Next 8-column stop from col 2 is col 8, so 6 spaces are inserted.
+	// "AB      C" (6 spaces) is the expanded form.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"tab_mid1.txt", tp.p1);
+	ConcatPath(baseDir, L"tab_mid2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "AB\tC\n");
+	WRITE_STR_FILE(tp.p2, "AB      C\n"); // exactly 6 spaces: columns 2..7 fill to stop at col 8
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	FreeTestPaths(&tp);
+}
+
+static void Test_AbbreviatedFlag_SameCallbackData(const WCHAR* baseDir)
+{
+	// FC_ABBREVIATED is a display-only flag: the CLI shortens long printed diff
+	// blocks, but the callback must still receive the full, unabbreviated block
+	// data.  Verify that the flag does not alter what is reported to the callback.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"abbr_full1.txt", tp.p1);
+	ConcatPath(baseDir, L"abbr_full2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "A\nX\nY\nZ\nB\n");
+	WRITE_STR_FILE(tp.p2, "A\n1\n2\n3\nB\n");
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, FC_ABBREVIATED, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	// Same single CHANGE block as without FC_ABBREVIATED.
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	// Full block boundaries must be reported even when abbreviated display is on.
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 1 && ctx.Blocks[0].EndA == 4);
+	ASSERT_TRUE(ctx.Blocks[0].StartB == 1 && ctx.Blocks[0].EndB == 4);
+	FreeTestPaths(&tp);
+}
+
+static void Test_ResyncLines_FiltersShortRun(const WCHAR* baseDir)
+{
+	// When ResyncLines=N, only consecutive-match runs of length >= N are kept
+	// as stable anchors.  Shorter runs are discarded and their surrounding
+	// differences are merged into a single larger block.
+	//
+	// Files: A = "X\ncommon1\ncommon2\nY\n"
+	//        B = "A\ncommon1\ncommon2\nB\n"
+	// LCS = [(1,1),(2,2)] — one run of exactly 2 consecutive matches.
+	//
+	// ResyncLines=2: run length 2 >= 2 → kept as anchor → 2 separate CHANGE blocks.
+	// ResyncLines=3: run length 2 <  3 → discarded      → 1 merged CHANGE block.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"resync_flt1.txt", tp.p1);
+	ConcatPath(baseDir, L"resync_flt2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "X\ncommon1\ncommon2\nY\n");
+	WRITE_STR_FILE(tp.p2, "A\ncommon1\ncommon2\nB\n");
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+
+	// ResyncLines=2: the run of 2 is a stable anchor; two separate diff blocks.
+	{
+		DIFF_TEST_CONTEXT ctx = { 0 };
+		FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+		cfg.ResyncLines = 2;
+		FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg);
+		ASSERT_TRUE(ctx.CallbackCount == 2);
+	}
+
+	// ResyncLines=3: the run of 2 is too short; differences merge into 1 block.
+	{
+		DIFF_TEST_CONTEXT ctx = { 0 };
+		FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+		cfg.ResyncLines = 3;
+		FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg);
+		ASSERT_TRUE(ctx.CallbackCount == 1);
+	}
+
+	FreeTestPaths(&tp);
+}
+
+static void Test_Regression_AutoDetect_NullByteIsBinary(const WCHAR* baseDir)
+{
+	// Regression: FC_MODE_AUTO must classify a file containing a null byte (0x00)
+	// as BINARY, not text.  The distinction is observable via the callback type:
+	//   - Binary mode  → FC_DIFF_TYPE_SIZE  (size mismatch, common prefix identical)
+	//   - Text mode    → FC_DIFF_TYPE_CHANGE (lines differ in length)
+	// File1 = {'A', 0x00} (2 bytes, contains null), File2 = "A" (1 byte, no null).
+	// In binary mode the single common byte 'A' matches and only the size differs.
+	unsigned char d1[] = { 'A', 0x00 };
+	const char* d2 = "A";
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"auto_null1.dat", tp.p1);
+	ConcatPath(baseDir, L"auto_null2.txt", tp.p2);
+	if (!WriteDataFile(tp.p1, d1, sizeof(d1))) Throw(L"write failed", tp.p1);
+	if (!WriteDataFile(tp.p2, d2, (DWORD)strlen(d2))) Throw(L"write failed", tp.p2);
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	// Binary mode: the common byte 'A' matches; only the size differs.
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_SIZE); // binary path taken
+	FreeTestPaths(&tp);
+}
+
+static void Test_Regression_AutoDetect_TextContent_IsText(const WCHAR* baseDir)
+{
+	// Regression: FC_MODE_AUTO must classify a file with >= 90% printable ASCII
+	// as TEXT and use a line-based diff.  The callback type distinguishes the path:
+	//   - Text mode   → FC_DIFF_TYPE_DELETE (line "Line2" removed)
+	//   - Binary mode → FC_DIFF_TYPE_SIZE   (files have different sizes)
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"auto_txt1.txt", tp.p1);
+	ConcatPath(baseDir, L"auto_txt2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "Line1\nLine2\n");
+	WRITE_STR_FILE(tp.p2, "Line1\n");
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &ctx);
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
+	// Text mode: "Line2" was deleted from file A relative to file B.
+	ASSERT_TRUE(ctx.CallbackCount == 1);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_DELETE); // text path taken
+	FreeTestPaths(&tp);
+}
+
+static void Test_Regression_LBn_WindowLimitsMatch(const WCHAR* baseDir)
+{
+	// Regression: when BufferLines is set to a small value, matching lines whose
+	// distance (|indexA - indexB|) exceeds that value must NOT be paired in the LCS.
+	// This is the documented /LBn divergence from Windows fc.exe.
+	//
+	// File A: "X\nX\nX\nSAME\n"  (SAME is at index 3)
+	// File B: "SAME\n"            (SAME is at index 0)
+	// Distance = |3 - 0| = 3.
+	//
+	// BufferLines=5 (>= 3): SAME is matched as a common anchor.
+	//   ProcessLcs reports a DELETE for the 3 "X" lines before SAME.
+	//   Callback type = FC_DIFF_TYPE_DELETE.
+	//
+	// BufferLines=2 (< 3): SAME is NOT matched; the LCS is empty.
+	//   ProcessLcs reports one big CHANGE covering all lines.
+	//   Callback type = FC_DIFF_TYPE_CHANGE.
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"lbn_win1.txt", tp.p1);
+	ConcatPath(baseDir, L"lbn_win2.txt", tp.p2);
+	WRITE_STR_FILE(tp.p1, "X\nX\nX\nSAME\n");
+	WRITE_STR_FILE(tp.p2, "SAME\n");
+	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
+	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
+
+	// BufferLines=5: distance 3 <= 5, SAME is matched → DELETE for the X lines.
+	{
+		DIFF_TEST_CONTEXT ctx = { 0 };
+		FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+		cfg.BufferLines = 5;
+		FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg);
+		ASSERT_TRUE(ctx.CallbackCount == 1);
+		ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_DELETE);
+	}
+
+	// BufferLines=2: distance 3 > 2, SAME not matched → one big CHANGE.
+	{
+		DIFF_TEST_CONTEXT ctx = { 0 };
+		FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+		cfg.BufferLines = 2;
+		FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg);
+		ASSERT_TRUE(ctx.CallbackCount == 1);
+		ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	}
+
+	FreeTestPaths(&tp);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1175,13 +1497,13 @@ int wmain(void)
 	Test_EmptyVsEmpty(testDir);
 	Test_VeryLargeFile(testDir); // Note: This test is disabled by default within the function
 	Test_MixedLineEndings(testDir);
-	//Test_NoFinalNewline(testDir);
+	Test_NoFinalNewline(testDir);
 	Test_ExtremelyLongLine(testDir);
-	//Test_WhitespaceOnlyFile(testDir);
+	Test_WhitespaceOnlyFile(testDir);
 	Test_ForwardSlashesInPath(testDir);
 	Test_RelativePathTraversal(testDir);
 	Test_TrailingDotInPath(testDir);
-	//Test_AlternateDataStream(testDir);
+	Test_AlternateDataStream(testDir);
 	Test_CompareFileToItself(testDir);
 	Test_InvalidMode(testDir);
 	Test_StructuredOutput_Deletion(testDir);
@@ -1193,6 +1515,18 @@ int wmain(void)
 	Test_TextAscii_DuplicateLinesLcs(testDir);
 	Test_Binary_AllMismatches(testDir);
 	Test_TextAscii_LineNumberAccuracy(testDir);
+	Test_BinarySizeDiff_SizeOnlyCallback(testDir);
+	Test_BinarySizeDiff_ContentAndSizeCallbacks(testDir);
+	Test_EmptyVsNonEmpty_Text(testDir);
+	Test_NonEmptyVsEmpty_Text(testDir);
+	Test_CaseInsensitive_Unicode(testDir);
+	Test_WhitespaceAndTabCompress(testDir);
+	Test_TabAtMidPosition(testDir);
+	Test_AbbreviatedFlag_SameCallbackData(testDir);
+	Test_ResyncLines_FiltersShortRun(testDir);
+	Test_Regression_AutoDetect_NullByteIsBinary(testDir);
+	Test_Regression_AutoDetect_TextContent_IsText(testDir);
+	Test_Regression_LBn_WindowLimitsMatch(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
