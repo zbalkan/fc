@@ -1242,6 +1242,15 @@ static void Test_CaseInsensitive_Unicode(const WCHAR* baseDir)
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
 	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_OK);
+	// Negative case: genuinely different Unicode content must still be FC_DIFFERENT
+	// under FC_IGNORE_CASE.  "CAFÉ" and "coffée" do not match even after lowercasing.
+	const char* other = "coff\xC3\xa9\n"; // "coffée" in UTF-8, not equal to "café"
+	if (!WriteDataFile(tp.p2, other, (DWORD)strlen(other))) Throw(L"write failed", tp.p2);
+	{
+		DIFF_TEST_CONTEXT ctx2 = { 0 };
+		FC_CONFIG cfg2 = MakeTestConfig(FC_MODE_TEXT_UNICODE, FC_IGNORE_CASE, &ctx2);
+		ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg2) == FC_DIFFERENT);
+	}
 	FreeTestPaths(&tp);
 }
 
@@ -1278,7 +1287,7 @@ static void Test_TabAtMidPosition(const WCHAR* baseDir)
 	ConcatPath(baseDir, L"tab_mid1.txt", tp.p1);
 	ConcatPath(baseDir, L"tab_mid2.txt", tp.p2);
 	WRITE_STR_FILE(tp.p1, "AB\tC\n");
-	WRITE_STR_FILE(tp.p2, "AB      C\n"); // 6 spaces (8 - 2 = 6)
+	WRITE_STR_FILE(tp.p2, "AB      C\n"); // exactly 6 spaces: columns 2..7 fill to stop at col 8
 	DIFF_TEST_CONTEXT ctx = { 0 };
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
@@ -1301,7 +1310,7 @@ static void Test_AbbreviatedFlag_SameCallbackData(const WCHAR* baseDir)
 	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, FC_ABBREVIATED, &ctx);
 	ConvertWideToUtf8OrExit(tp.p1, tp.u1, UTF8_BUFFER_SIZE);
 	ConvertWideToUtf8OrExit(tp.p2, tp.u2, UTF8_BUFFER_SIZE);
-	FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg);
+	ASSERT_TRUE(FC_CompareFilesUtf8(tp.u1, tp.u2, &cfg) == FC_DIFFERENT);
 	// Same single CHANGE block as without FC_ABBREVIATED.
 	ASSERT_TRUE(ctx.CallbackCount == 1);
 	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
