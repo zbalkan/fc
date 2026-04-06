@@ -962,6 +962,56 @@ extern "C" {
 	}
 
 	/**
+	 * @brief Compares two parsed lines for equality using the same normalization as the
+	 * hash function.
+	 *
+	 * This is used as a secondary check after a hash match to rule out false positives
+	 * due to hash collisions.  The comparison is case-insensitive when FC_IGNORE_CASE is
+	 * set, mirroring the behavior of _FC_HashLine.
+	 * @internal
+	 * @param lineA The first line to compare.
+	 * @param lineB The second line to compare.
+	 * @param Config A pointer to the comparison configuration.
+	 * @return TRUE if the lines are equal under the current configuration, FALSE otherwise.
+	 */
+	static inline BOOL
+		_FC_LinesEqual(
+			_In_ const _FC_LINE* lineA,
+			_In_ const _FC_LINE* lineB,
+			_In_ const FC_CONFIG* Config)
+	{
+		if (lineA->Length != lineB->Length)
+			return FALSE;
+
+		if (!(Config->Flags & FC_IGNORE_CASE))
+			return memcmp(lineA->Text, lineB->Text, lineA->Length) == 0;
+
+		if (Config->Mode == FC_MODE_TEXT_UNICODE)
+		{
+			// Unicode-aware case-insensitive comparison: lowercase both sides and compare.
+			size_t LowLenA = 0, LowLenB = 0;
+			char* LowA = _FC_StringToLowerUnicode(lineA->Text, lineA->Length, &LowLenA);
+			char* LowB = _FC_StringToLowerUnicode(lineB->Text, lineB->Length, &LowLenB);
+			BOOL Equal = (LowA != NULL && LowB != NULL &&
+				LowLenA == LowLenB &&
+				memcmp(LowA, LowB, LowLenA) == 0);
+			_FC_HeapFree(LowA);
+			_FC_HeapFree(LowB);
+			return Equal;
+		}
+
+		// ASCII case-insensitive: compare byte-by-byte using the same _FC_ToLowerAscii
+		// that the hash function uses.
+		for (size_t i = 0; i < lineA->Length; i++)
+		{
+			if (_FC_ToLowerAscii((unsigned char)lineA->Text[i]) !=
+				_FC_ToLowerAscii((unsigned char)lineB->Text[i]))
+				return FALSE;
+		}
+		return TRUE;
+	}
+
+	/**
 	 * @brief Frees all memory associated with the lines stored in a line buffer.
 	 *
 	 * This iterates through each `_FC_LINE` in the buffer, frees the `Text` pointer
@@ -1199,12 +1249,11 @@ extern "C" {
 
 					const _FC_LINE* lineB = (const _FC_LINE*)_FC_BufferGet(pBufferB, match->IndexInB);
 					// Hashes are only a pre-filter; verify actual line equality to avoid
-					// false matches on hash collisions.
-					if (lineA->Length != lineB->Length ||
-						memcmp(lineA->Text, lineB->Text, lineA->Length) != 0)
-					{
+					// false matches on hash collisions.  Use the config-aware helper so that
+					// case-insensitive modes are handled correctly (raw memcmp would reject
+					// "Hello" == "hello" even though their hashes match under FC_IGNORE_CASE).
+					if (!_FC_LinesEqual(lineA, lineB, Config))
 						continue;
-					}
 
 					size_t k = 0, low = 1, high = LcsLength;
 					while (low <= high) {
