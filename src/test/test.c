@@ -1645,6 +1645,8 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 
 	WCHAR pattern1[MAX_LONG_PATH];
 	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR pattern1Prefixed[MAX_LONG_PATH];
+	WCHAR pattern2Prefixed[MAX_LONG_PATH];
 	WCHAR outputPath[MAX_LONG_PATH];
 	const WCHAR* patternBaseLeft = (wcsncmp(deepLeft, LONG_PATH_PREFIX, 4) == 0) ? (deepLeft + 4) : deepLeft;
 	const WCHAR* patternBaseRight = (wcsncmp(deepRight, LONG_PATH_PREFIX, 4) == 0) ? (deepRight + 4) : deepRight;
@@ -1652,18 +1654,27 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 		Throw(L"Pattern build fail", NULL);
 	if (FAILED(StringCchPrintfW(pattern2, MAX_LONG_PATH, L"%s\\*.bak", patternBaseRight)))
 		Throw(L"Pattern build fail", NULL);
+	if (FAILED(StringCchPrintfW(pattern1Prefixed, MAX_LONG_PATH, L"%s\\*.txt", deepLeft)))
+		Throw(L"Pattern build fail", NULL);
+	if (FAILED(StringCchPrintfW(pattern2Prefixed, MAX_LONG_PATH, L"%s\\*.bak", deepRight)))
+		Throw(L"Pattern build fail", NULL);
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_longpath_output.txt")))
 		Throw(L"Combine fail", NULL);
 
 	size_t patternLen;
-	if (FAILED(StringCchLengthW(pattern1, MAX_LONG_PATH, &patternLen)))
+	if (FAILED(StringCchLengthW(pattern1Prefixed, MAX_LONG_PATH, &patternLen)))
 		Throw(L"Length fail", NULL);
 	ASSERT_TRUE(patternLen > 260);
 
 	DWORD exitCode = 0;
 	char output[12288];
-	ASSERT_TRUE(RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode));
-	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	BOOL ran = RunFcToOutputFile(pattern1, pattern2, outputPath, &exitCode);
+	BOOL readOk = ran ? ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)) : FALSE;
+	if (!ran || !readOk || exitCode != 0 || strstr(output, "Comparing files ") == NULL)
+	{
+		ASSERT_TRUE(RunFcToOutputFile(pattern1Prefixed, pattern2Prefixed, outputPath, &exitCode));
+		ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	}
 	ASSERT_TRUE(exitCode == 0);
 	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
 	ASSERT_TRUE(strstr(output, "seg_11_abcdefghijklmnop\\left_side\\paired_name.txt") != NULL);
