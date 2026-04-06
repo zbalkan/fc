@@ -482,6 +482,13 @@ ExpandWildcardPattern(_In_z_ const WCHAR* Pattern)
 		// Grow the array if needed.
 		if (Exp->Count >= Exp->Capacity)
 		{
+			if (Exp->Capacity > (SIZE_MAX / 2) ||
+				(Exp->Capacity * 2) > (SIZE_MAX / sizeof(WCHAR*)))
+			{
+				HeapFree(GetProcessHeap(), 0, FullPath);
+				FindClose(hFind);
+				return Exp;
+			}
 			size_t NewCapacity = Exp->Capacity * 2;
 			WCHAR** NewPaths = (WCHAR**)HeapReAlloc(
 				GetProcessHeap(), 0,

@@ -135,9 +135,10 @@ static void ConcatPath(
 	_Out_writes_z_(MAX_LONG_PATH) WCHAR* out)
 {
 	WCHAR* ext = AllocWcharPath();
+	const BOOL alreadyExtended = (wcsncmp(baseDir, LONG_PATH_PREFIX, 4) == 0);
 
-	if (FAILED(StringCchCopyW(ext, MAX_LONG_PATH, LONG_PATH_PREFIX)) ||
-		FAILED(StringCchCatW(ext, MAX_LONG_PATH, baseDir)) ||
+	if (FAILED(StringCchCopyW(ext, MAX_LONG_PATH, alreadyExtended ? baseDir : LONG_PATH_PREFIX)) ||
+		(!alreadyExtended && FAILED(StringCchCatW(ext, MAX_LONG_PATH, baseDir))) ||
 		FAILED(PathCchAddBackslash(ext, MAX_LONG_PATH)))
 	{
 		HeapFree(GetProcessHeap(), 0, ext);
