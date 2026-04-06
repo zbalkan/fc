@@ -1546,6 +1546,61 @@ static void Test_Cli_DualWildcardDisjointStems(const WCHAR* baseDir)
 	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") != NULL);
 }
 
+static void Test_Cli_DualWildcardPartialStemOverlap(const WCHAR* baseDir)
+{
+	WCHAR dirLeft[MAX_LONG_PATH];
+	WCHAR dirRight[MAX_LONG_PATH];
+	if (FAILED(PathCchCombine(dirLeft, MAX_LONG_PATH, baseDir, L"wild_left_partial"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(dirRight, MAX_LONG_PATH, baseDir, L"wild_right_partial"))) Throw(L"Combine fail", NULL);
+	CreateDirectoryW(dirLeft, NULL);
+	CreateDirectoryW(dirRight, NULL);
+
+	WCHAR leftA[MAX_LONG_PATH];
+	WCHAR leftB[MAX_LONG_PATH];
+	WCHAR rightA[MAX_LONG_PATH];
+	WCHAR rightB[MAX_LONG_PATH];
+	ConcatPath(dirLeft, L"alpha.txt", leftA);
+	ConcatPath(dirLeft, L"beta.txt", leftB);
+	ConcatPath(dirRight, L"alpha.bak", rightA);
+	ConcatPath(dirRight, L"gamma.bak", rightB);
+
+	// One matching stem pair ("alpha"), one unmatched file on each side.
+	WRITE_STR_FILE(leftA, "shared content\n");
+	WRITE_STR_FILE(rightA, "shared content\n");
+	WRITE_STR_FILE(leftB, "left only\n");
+	WRITE_STR_FILE(rightB, "right only\n");
+
+	WCHAR pattern1[MAX_LONG_PATH];
+	WCHAR pattern2[MAX_LONG_PATH];
+	WCHAR outputPath[MAX_LONG_PATH];
+	WCHAR modulePath[MAX_LONG_PATH];
+	WCHAR command[4096];
+
+	if (FAILED(PathCchCombine(pattern1, MAX_LONG_PATH, dirLeft, L"*.txt"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(pattern2, MAX_LONG_PATH, dirRight, L"*.bak"))) Throw(L"Combine fail", NULL);
+	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_partial_output.txt"))) Throw(L"Combine fail", NULL);
+	if (!GetModuleFileNameW(NULL, modulePath, MAX_LONG_PATH)) Throw(L"Module path fail", NULL);
+	WCHAR* lastSlash = wcsrchr(modulePath, L'\\');
+	if (lastSlash == NULL) Throw(L"Module path fail", NULL);
+	lastSlash[1] = L'\0';
+	if (FAILED(StringCchCatW(modulePath, MAX_LONG_PATH, L"fc.exe"))) Throw(L"Combine fail", NULL);
+
+	if (FAILED(StringCchPrintfW(command, ARRAYSIZE(command),
+		L"\"%s\" \"%s\" \"%s\" > \"%s\" 2>&1",
+		modulePath, pattern1, pattern2, outputPath)))
+	{
+		Throw(L"Command build fail", NULL);
+	}
+
+	int exitCode = _wsystem(command);
+	char output[8192];
+	ASSERT_TRUE(exitCode != -1);
+	ASSERT_TRUE(ReadFileToBuffer(outputPath, output, ARRAYSIZE(output)));
+	ASSERT_TRUE(exitCode == 0);
+	ASSERT_TRUE(strstr(output, "Comparing files ") != NULL);
+	ASSERT_TRUE(strstr(output, "FC: no matching stem pairs found for ") == NULL);
+}
+
 int wmain(void)
 {
 	WCHAR tempDir[MAX_LONG_PATH]; DWORD len = GetTempPathW(MAX_LONG_PATH, tempDir);
@@ -1617,6 +1672,7 @@ int wmain(void)
 	Test_Regression_AutoDetect_TextContent_IsText(testDir);
 	Test_Regression_LBn_WindowLimitsMatch(testDir);
 	Test_Cli_DualWildcardDisjointStems(testDir);
+	Test_Cli_DualWildcardPartialStemOverlap(testDir);
 
 	HANDLE hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
 	WriteW(hConsole, L"\n\n");
