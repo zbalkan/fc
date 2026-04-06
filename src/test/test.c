@@ -1388,6 +1388,77 @@ static void Test_Regression_AutoDetect_NullByteIsBinary(const WCHAR* baseDir)
 	FreeTestPaths(&tp);
 }
 
+static void Test_MaxTextFileBytes_ExplicitTextFallsBackToBinary(const WCHAR* baseDir)
+{
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"maxtext_explicit_a.txt", tp.p1);
+	ConcatPath(baseDir, L"maxtext_explicit_b.txt", tp.p2);
+
+	WRITE_STR_FILE(tp.p1, "AAAAA\nAAAAA\nAAAAA\nAAAAA\n");
+	WRITE_STR_FILE(tp.p2, "AAAAB\nAAAAA\nAAAAA\nAAAAA\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	cfg.MaxTextFileBytes = 8; // Force text-mode fallback to binary for these files.
+
+	FC_RESULT r = FC_CompareFilesW(tp.p1, tp.p2, &cfg);
+	ASSERT_TRUE(r == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount > 0);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	// Binary callback encodes differing bytes in EndA/EndB, unlike text line ranges.
+	ASSERT_TRUE(ctx.Blocks[0].EndA == (size_t)'A');
+	ASSERT_TRUE(ctx.Blocks[0].EndB == (size_t)'B');
+
+	FreeTestPaths(&tp);
+}
+
+static void Test_MaxTextFileBytes_AutoTextFallsBackToBinary(const WCHAR* baseDir)
+{
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"maxtext_auto_a.txt", tp.p1);
+	ConcatPath(baseDir, L"maxtext_auto_b.txt", tp.p2);
+
+	WRITE_STR_FILE(tp.p1, "ZZZZZ\nZZZZZ\nZZZZZ\nZZZZZ\n");
+	WRITE_STR_FILE(tp.p2, "ZZZYZ\nZZZZZ\nZZZZZ\nZZZZZ\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_AUTO, 0, &ctx);
+	cfg.MaxTextFileBytes = 8; // Force fallback in AUTO after text classification.
+
+	FC_RESULT r = FC_CompareFilesW(tp.p1, tp.p2, &cfg);
+	ASSERT_TRUE(r == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount > 0);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	ASSERT_TRUE(ctx.Blocks[0].EndA == (size_t)'Z');
+	ASSERT_TRUE(ctx.Blocks[0].EndB == (size_t)'Y');
+
+	FreeTestPaths(&tp);
+}
+
+static void Test_MaxTextFileBytes_ZeroUsesDefaultTextPath(const WCHAR* baseDir)
+{
+	TEST_PATHS tp = AllocTestPaths();
+	ConcatPath(baseDir, L"maxtext_default_a.txt", tp.p1);
+	ConcatPath(baseDir, L"maxtext_default_b.txt", tp.p2);
+
+	WRITE_STR_FILE(tp.p1, "alpha\n");
+	WRITE_STR_FILE(tp.p2, "beta\n");
+
+	DIFF_TEST_CONTEXT ctx = { 0 };
+	FC_CONFIG cfg = MakeTestConfig(FC_MODE_TEXT_ASCII, 0, &ctx);
+	cfg.MaxTextFileBytes = 0; // Explicitly use default ceiling.
+
+	FC_RESULT r = FC_CompareFilesW(tp.p1, tp.p2, &cfg);
+	ASSERT_TRUE(r == FC_DIFFERENT);
+	ASSERT_TRUE(ctx.CallbackCount > 0);
+	ASSERT_TRUE(ctx.Blocks[0].Type == FC_DIFF_TYPE_CHANGE);
+	// Text callback reports line ranges; single-line change should be [0,1) for both files.
+	ASSERT_TRUE(ctx.Blocks[0].StartA == 0 && ctx.Blocks[0].EndA == 1);
+	ASSERT_TRUE(ctx.Blocks[0].StartB == 0 && ctx.Blocks[0].EndB == 1);
+
+	FreeTestPaths(&tp);
+}
+
 static void Test_Regression_AutoDetect_TextContent_IsText(const WCHAR* baseDir)
 {
 	// Regression: FC_MODE_AUTO must classify a file with >= 90% printable ASCII
@@ -2129,6 +2200,9 @@ int wmain(void)
 	Test_AbbreviatedFlag_SameCallbackData(testDir);
 	Test_ResyncLines_FiltersShortRun(testDir);
 	Test_Regression_AutoDetect_NullByteIsBinary(testDir);
+	Test_MaxTextFileBytes_ExplicitTextFallsBackToBinary(testDir);
+	Test_MaxTextFileBytes_AutoTextFallsBackToBinary(testDir);
+	Test_MaxTextFileBytes_ZeroUsesDefaultTextPath(testDir);
 	Test_Regression_AutoDetect_TextContent_IsText(testDir);
 	Test_Regression_LBn_WindowLimitsMatch(testDir);
 	Test_Cli_WildcardLongPathFidelity(testDir);
