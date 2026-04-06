@@ -1646,9 +1646,11 @@ static void Test_Cli_WildcardLongPathFidelity(const WCHAR* baseDir)
 	WCHAR pattern1[MAX_LONG_PATH];
 	WCHAR pattern2[MAX_LONG_PATH];
 	WCHAR outputPath[MAX_LONG_PATH];
-	if (FAILED(StringCchPrintfW(pattern1, MAX_LONG_PATH, L"%s\\*.txt", deepLeft)))
+	const WCHAR* patternBaseLeft = (wcsncmp(deepLeft, LONG_PATH_PREFIX, 4) == 0) ? (deepLeft + 4) : deepLeft;
+	const WCHAR* patternBaseRight = (wcsncmp(deepRight, LONG_PATH_PREFIX, 4) == 0) ? (deepRight + 4) : deepRight;
+	if (FAILED(StringCchPrintfW(pattern1, MAX_LONG_PATH, L"%s\\*.txt", patternBaseLeft)))
 		Throw(L"Pattern build fail", NULL);
-	if (FAILED(StringCchPrintfW(pattern2, MAX_LONG_PATH, L"%s\\*.bak", deepRight)))
+	if (FAILED(StringCchPrintfW(pattern2, MAX_LONG_PATH, L"%s\\*.bak", patternBaseRight)))
 		Throw(L"Pattern build fail", NULL);
 	if (FAILED(PathCchCombine(outputPath, MAX_LONG_PATH, baseDir, L"wildcard_longpath_output.txt")))
 		Throw(L"Combine fail", NULL);
