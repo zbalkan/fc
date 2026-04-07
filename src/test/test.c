@@ -11,8 +11,22 @@
 #define MAX_LONG_PATH 32768
 const int UTF8_BUFFER_SIZE = MAX_LONG_PATH * 4;
 #define LONG_PATH_PREFIX L"\\\\?\\"
+#define MAX_FAILURES 256
+#define FAILURE_DETAIL_SIZE 1024
+
 int FAILURE = 0;
 int SUCCESS = 0;
+
+// Structure to store failure details for later reporting
+typedef struct {
+	WCHAR FunctionName[128];
+	WCHAR FileName[256];
+	int LineNumber;
+	WCHAR Assertion[512];
+} TEST_FAILURE;
+
+static TEST_FAILURE g_Failures[MAX_FAILURES];
+static int g_FailureCount = 0;
 
 /**
  * @brief Writes a wide string to the given handle.
@@ -62,37 +76,44 @@ static void WriteW(_In_ HANDLE h, _In_z_ const WCHAR* msg)
 }
 
 #define ASSERT_TRUE(expr) \
-    do { \
-        HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); \
-        WCHAR funcNameW[128]; \
-        WCHAR fileW[256]; \
-        WCHAR _lineW[16]; \
-        WCHAR _exprW[512]; \
-        if (!MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128)) \
-            StringCchCopyW(funcNameW, 128, L"<unknown>"); \
-        if (!MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256)) \
-            StringCchCopyW(fileW, 256, L"<unknown>"); \
-        if (!MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512)) \
-            StringCchCopyW(_exprW, 512, L"<expression>"); \
-        if (!(expr)) { \
-            swprintf_s(_lineW, 16, L"%d", __LINE__); \
-            WriteW(h, L"Test FAILED: "); \
-            WriteW(h, funcNameW); \
-            WriteW(h, L"\n  Assertion failed: "); \
-            WriteW(h, _exprW); \
-            WriteW(h, L"\n  File: "); \
-            WriteW(h, fileW); \
-            WriteW(h, L", Line: "); \
-            WriteW(h, _lineW); \
-            WriteW(h, L"\n\n"); \
+	do { \
+		HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE); \
+		WCHAR funcNameW[128]; \
+		WCHAR fileW[256]; \
+		WCHAR _lineW[16]; \
+		WCHAR _exprW[512]; \
+		if (!MultiByteToWideChar(CP_ACP, 0, __FUNCTION__, -1, funcNameW, 128)) \
+			StringCchCopyW(funcNameW, 128, L"<unknown>"); \
+		if (!MultiByteToWideChar(CP_ACP, 0, __FILE__, -1, fileW, 256)) \
+			StringCchCopyW(fileW, 256, L"<unknown>"); \
+		if (!MultiByteToWideChar(CP_ACP, 0, #expr, -1, _exprW, 512)) \
+			StringCchCopyW(_exprW, 512, L"<expression>"); \
+		if (!(expr)) { \
+			swprintf_s(_lineW, 16, L"%d", __LINE__); \
+			WriteW(h, L"Test FAILED: "); \
+			WriteW(h, funcNameW); \
+			WriteW(h, L"\n  Assertion failed: "); \
+			WriteW(h, _exprW); \
+			WriteW(h, L"\n  File: "); \
+			WriteW(h, fileW); \
+			WriteW(h, L", Line: "); \
+			WriteW(h, _lineW); \
+			WriteW(h, L"\n\n"); \
 			FAILURE++; \
-        } else { \
-            WriteW(h, L"Test PASSED: "); \
-            WriteW(h, funcNameW); \
-            WriteW(h, L"\n"); \
+			if (g_FailureCount < MAX_FAILURES) { \
+				StringCchCopyW(g_Failures[g_FailureCount].FunctionName, 128, funcNameW); \
+				StringCchCopyW(g_Failures[g_FailureCount].FileName, 256, fileW); \
+				g_Failures[g_FailureCount].LineNumber = __LINE__; \
+				StringCchCopyW(g_Failures[g_FailureCount].Assertion, 512, _exprW); \
+				g_FailureCount++; \
+			} \
+		} else { \
+			WriteW(h, L"Test PASSED: "); \
+			WriteW(h, funcNameW); \
+			WriteW(h, L"\n"); \
 			SUCCESS++; \
-        } \
-    } while(0)
+		} \
+	} while(0)
 
 // Abort on error
 static void Throw(_In_z_ const WCHAR* msg, _In_opt_z_ const WCHAR* path)
@@ -2287,6 +2308,30 @@ int wmain(void)
 
 		swprintf_s(msg, sizeof(msg) / sizeof(WCHAR), L"%d/%d passed\n", SUCCESS, total);
 		WriteW(hConsole, msg);
+
+		// Write failure details to stderr for CI/CD systems
+		HANDLE hStderr = GetStdHandle(STD_ERROR_HANDLE);
+		WriteW(hStderr, L"\n===============================================================================\n");
+		WriteW(hStderr, L"FAILED TEST DETAILS\n");
+		WriteW(hStderr, L"===============================================================================\n\n");
+
+		for (int i = 0; i < g_FailureCount; ++i) {
+			WCHAR failureMsg[1024];
+			swprintf_s(failureMsg, sizeof(failureMsg) / sizeof(WCHAR),
+				L"[%d/%d] %s\n  File: %s (Line %d)\n  Assertion: %s\n\n",
+				i + 1, g_FailureCount,
+				g_Failures[i].FunctionName,
+				g_Failures[i].FileName,
+				g_Failures[i].LineNumber,
+				g_Failures[i].Assertion);
+			WriteW(hStderr, failureMsg);
+		}
+
+		WriteW(hStderr, L"===============================================================================\n");
+		swprintf_s(msg, sizeof(msg) / sizeof(WCHAR), L"SUMMARY: %d test(s) failed, %d test(s) passed\n", FAILURE, SUCCESS);
+		WriteW(hStderr, msg);
+		WriteW(hStderr, L"===============================================================================\n");
+
 		return 1;
 	}
 }
