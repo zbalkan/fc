@@ -35,6 +35,7 @@ The entire codebase is written in pure C and has no external dependencies beyond
     *   `/U` - Unicode-aware text comparison
     *   `/W` - Ignore whitespace differences
     *   `/nnnn` - Set resync line threshold (default: 2)
+*   **Text Diff Engine**: Uses a Hunt-McIlroy Longest Common Subsequence (LCS) algorithm — the same family as Unix `diff` — rather than the sliding-window resync heuristic used by Windows `fc.exe`. This produces structurally equivalent output in the common case, but diff-block boundaries and context lines may differ on files with many interleaved edits. If your workflow depends on output being byte-identical to Windows `fc.exe`, use the original.
 *   **Text Diff Output**: Displays line-by-line differences in a format compatible with Windows `fc.exe`, showing difference blocks with proper sectioning using asterisk markers.
 *   **Wildcard Support**: Both input file arguments may use `*` or `?` wildcards to compare matching pairs (see examples below).
 
@@ -82,8 +83,10 @@ fc.exe [options] <file1> <file2>
 > **Large-file safeguard:**
 > To avoid pathological memory usage in text mode, very large files are compared
 > in binary mode once either side exceeds the configured text-size ceiling
-> (`FC_CONFIG.MaxTextFileBytes`, default 128 MiB). This applies in explicit text
-> modes as well as auto mode.
+> (`FC_CONFIG.MaxTextFileBytes`, default 128 MiB). **This applies even when `/L` or
+> `/U` is passed explicitly** — the flag is silently overridden for files above the
+> ceiling. If you need guaranteed text-mode comparison of very large files, raise
+> `MaxTextFileBytes` via the library API directly.
 > For large binary comparisons, the implementation also switches from memory-mapped
 > I/O to streamed 1 MiB micro-batches with sequential-read hints to reduce cache
 > churn and working-set spikes.
@@ -293,12 +296,14 @@ Each failure fires exactly once; after triggering, the flag resets so subsequent
 
 To keep behavior explicit for maintainers and users, this project records intentional (or currently accepted) differences from Microsoft `fc.exe`:
 
+- **Text diff algorithm**: Uses Hunt-McIlroy LCS (O(n log n) on matches) rather than Windows `fc.exe`'s bounded O(n²) resync-window heuristic. Practical output is equivalent for typical files; diff-block boundaries can differ on files with many interleaved edits. The `/nnnn` resync threshold and `/LBn` anchor-distance window are mapped onto LCS post-filtering rather than emulating the original line-buffer mechanics exactly.
 - **Wildcard matching**: Both file arguments support wildcards and match by file "stem"; error/warning reporting aligns to Windows behavior, but may differ for partial matches or ordering.
   - If both wildcard sets expand successfully but no stem pairs match at all, CLI now reports: `FC: no matching stem pairs found for <pattern1> and <pattern2>` and exits non-zero.
 - **Output redirection**: Output is fully compatible with piping/redirection to files or CI environments, falling back to UTF-8 output if no console is present.
 - **`/OFF` and `/OFFLINE`**: Accepted as compatibility switches but currently act as no-ops in the CLI implementation.
 - **`/LBn`**: Implemented as a bounded resynchronization window heuristic in the LCS matcher, not as a strict legacy internal text-buffer emulation.
 - **`FC_MODE_AUTO`**: Uses an ordered, content-based heuristic, not extension-based defaults: BOM recognized as text, null bytes as binary, ≥90% printable as text. This is a modernized/safer behavior compared to Windows.
+- **Path security and canonicalisation**: All input paths are validated through a seven-step pipeline before any file handle is opened. The pipeline calls the undocumented NTDLL exports `RtlDetermineDosPathNameType_U` and `RtlDosPathNameToNtPathName_U_WithStatus` to resolve the canonical NT path, then rejects: raw device paths (`\\.\`, `\\?\`), reserved DOS device names (CON, PRN, AUX, NUL, COM1–COM9, LPT1–LPT9), named pipe paths (`\Device\`, `\\??\PIPE\`), and Alternate Data Stream paths (any `:` after the drive-letter colon). Windows `fc.exe` performs no equivalent sanitisation. Because this relies on undocumented Rtl* APIs, behaviour could change on future OS versions without notice; the dependency is intentional and documented here for maintainability.
 - **Alternate Data Streams**: Files or paths containing `:` (ADS) are explicitly rejected.
 - **Tab Handling**: Expands tab characters to true 8-column stops (not fixed 4-spaces), matching ReactOS and Windows results.
 - **Whitespace Ignore**: `/W` compresses internal runs of whitespace, trims ends, and matches file content accordingly (not simply strips all whitespace).
