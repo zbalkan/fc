@@ -657,13 +657,13 @@ extern "C" {
 			// Shrink path
 			size_t delta = oldPatternSize - newPatternSize;
 			size_t totalShrink = count * delta;
-			if (totalShrink > pBuffer->Count)
-				return FALSE;  // Logic error: cannot shrink more than the buffer size
-			newCount = pBuffer->Count - totalShrink;
-		}
+				if (totalShrink > pBuffer->Count)
+					return FALSE;  // Logic error: cannot shrink more than the buffer size
+				newCount = pBuffer->Count - totalShrink;
+			}
 
-		_FC_BUFFER newBuf;
-		_FC_BufferInit(&newBuf, pBuffer->ElementSize);
+			_FC_BUFFER newBuf = { 0 };
+			_FC_BufferInit(&newBuf, pBuffer->ElementSize);
 
 		// Handle the edge case of replacing with nothing, resulting in an empty buffer
 		if (newCount == 0)
@@ -1068,8 +1068,8 @@ extern "C" {
 			_In_ const size_t* LcsB,
 			_In_ size_t LcsLength,
 			_In_ UINT ResyncLines,
-			_Outptr_result_buffer_maybenull_(*pFilteredLcsA) size_t** pFilteredLcsA,
-			_Outptr_result_buffer_maybenull_(*pFilteredLcsB) size_t** pFilteredLcsB)
+			_Outptr_result_buffer_maybenull_(LcsLength) size_t** pFilteredLcsA,
+			_Outptr_result_buffer_maybenull_(LcsLength) size_t** pFilteredLcsB)
 	{
 		*pFilteredLcsA = NULL;
 		*pFilteredLcsB = NULL;
@@ -1098,7 +1098,7 @@ extern "C" {
 			return LcsLength;
 		}
 
-		_FC_BUFFER FilteredA, FilteredB;
+		_FC_BUFFER FilteredA = { 0 }, FilteredB = { 0 };
 		_FC_BufferInit(&FilteredA, sizeof(size_t));
 		_FC_BufferInit(&FilteredB, sizeof(size_t));
 
@@ -1399,7 +1399,7 @@ extern "C" {
 			}
 			size_t LineLength = (size_t)(Newline - Ptr);
 
-			_FC_BUFFER textBuffer;
+			_FC_BUFFER textBuffer = { 0 };
 			_FC_BufferInit(&textBuffer, sizeof(char));
 			if (!_FC_BufferAppendRange(&textBuffer, Ptr, LineLength))
 			{
@@ -1410,7 +1410,7 @@ extern "C" {
 			if (!(Config->Flags & FC_RAW_TABS))
 			{
 				// Expand tabs using 8-column tab stops, matching fc.exe/ReactOS behavior.
-				_FC_BUFFER expandedBuffer;
+				_FC_BUFFER expandedBuffer = { 0 };
 				_FC_BufferInit(&expandedBuffer, sizeof(char));
 				int col = 0;
 				for (size_t ti = 0; ti < textBuffer.Count; ti++)
@@ -1569,7 +1569,7 @@ extern "C" {
 		*Result = FC_OK;
 		HANDLE FileHandle = INVALID_HANDLE_VALUE;
 		char* Buffer = NULL;
-		_FC_BUFFER FileBuffer;
+		_FC_BUFFER FileBuffer = { 0 };
 		_FC_BufferInit(&FileBuffer, sizeof(char));
 
 		FileHandle = CreateFileW(
@@ -1607,6 +1607,8 @@ extern "C" {
 			goto cleanup;
 		}
 
+		#pragma warning(push)
+		#pragma warning(disable:6262)  // Stack usage warning: benign for scoped read chunk
 		{
 			enum { FC_READ_CHUNK = 64 * 1024 };
 			char ReadChunk[FC_READ_CHUNK];
@@ -1628,6 +1630,7 @@ extern "C" {
 				}
 			}
 		}
+		#pragma warning(pop)
 
 		// Ensure null-termination.
 		if (!_FC_BufferEnsureCapacity(&FileBuffer, 1))
@@ -1848,7 +1851,7 @@ extern "C" {
 		size_t Length1 = 0, Length2 = 0;
 		char* Buffer1 = NULL;
 		char* Buffer2 = NULL;
-		_FC_BUFFER BufferA, BufferB;
+		_FC_BUFFER BufferA = { 0 }, BufferB = { 0 };
 
 		// Initialize our generic buffers to hold _FC_LINE structs.
 		_FC_BufferInit(&BufferA, sizeof(_FC_LINE));
