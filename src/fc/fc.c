@@ -695,6 +695,55 @@ GetFileStem(_In_z_ const WCHAR* Path)
 }
 
 /**
+ * @brief Attempts to add a single file to an expansion if it doesn't contain wildcards and the file exists.
+ *
+ * When a pattern is not a wildcard but refers to a plain file that exists,
+ * this function allocates space for it in the expansion and adds it as a
+ * single entry. This allows mixing wildcard patterns with plain file names.
+ *
+ * @param Pattern The pattern to check (may be a plain file path or wildcard).
+ * @param Expansion The expansion to potentially add the file to.
+ * @return TRUE if the pattern was a plain file and was successfully added or handled, FALSE otherwise.
+ */
+static BOOL
+TryAddPlainFileToExpansion(_In_z_ const WCHAR* Pattern, _Inout_ WILDCARD_EXPANSION* Expansion)
+{
+	if (ContainsWildcard(Pattern))
+		return FALSE;
+
+	if (GetFileAttributesW(Pattern) == INVALID_FILE_ATTRIBUTES)
+		return FALSE;
+
+	// File exists; allocate room for one entry if we don't have any
+	if (Expansion->Count > 0)
+		return TRUE; // Already has entries, don't add more
+
+	// Ensure we have at least 1 capacity
+	if (Expansion->Capacity < 1)
+	{
+		WCHAR** NewPaths = (WCHAR**)HeapReAlloc(GetProcessHeap(), 0, Expansion->Paths, sizeof(WCHAR*));
+		if (NewPaths == NULL)
+		{
+			Expansion->HadError = TRUE;
+			return TRUE;
+		}
+		Expansion->Paths = NewPaths;
+		Expansion->Capacity = 1;
+	}
+
+	WCHAR* FullPath = (WCHAR*)HeapAlloc(GetProcessHeap(), 0, (wcslen(Pattern) + 1) * sizeof(WCHAR));
+	if (FullPath == NULL)
+	{
+		Expansion->HadError = TRUE;
+		return TRUE;
+	}
+
+	wcscpy_s(FullPath, wcslen(Pattern) + 1, Pattern);
+	Expansion->Paths[Expansion->Count++] = FullPath;
+	return TRUE;
+}
+
+/**
  * @brief Performs file comparisons for wildcard-expanded patterns.
  *
  * Expands both arguments (one or both may contain wildcards) and compares
@@ -725,6 +774,24 @@ WildcardFileCompare(
 		ConPrintW(GetStdHandle(STD_ERROR_HANDLE), L"Error: memory allocation failure during wildcard expansion.\n");
 		return 2;
 	}
+	if (Exp1->HadError || Exp2->HadError)
+	{
+		FreeWildcardExpansion(Exp1);
+		FreeWildcardExpansion(Exp2);
+		ConPrintW(GetStdHandle(STD_ERROR_HANDLE), L"Error: memory allocation failure during wildcard expansion.\n");
+		return 2;
+	}
+
+	// Try to add plain files if expansion returned no results but pattern is not a wildcard
+	if (Exp1->Count == 0 && !ContainsWildcard(Pattern1))
+	{
+		TryAddPlainFileToExpansion(Pattern1, Exp1);
+	}
+	if (Exp2->Count == 0 && !ContainsWildcard(Pattern2))
+	{
+		TryAddPlainFileToExpansion(Pattern2, Exp2);
+	}
+
 	if (Exp1->HadError || Exp2->HadError)
 	{
 		FreeWildcardExpansion(Exp1);
