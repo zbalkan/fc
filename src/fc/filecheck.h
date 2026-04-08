@@ -194,6 +194,8 @@ extern "C" {
 		const _FC_BUFFER* Lines1;   /**< A pointer to the buffer of _FC_LINE structs for file 1. */
 		const _FC_BUFFER* Lines2;   /**< A pointer to the buffer of _FC_LINE structs for file 2. */
 		void* UserData;             /**< The user-defined data pointer from FC_CONFIG. */
+		size_t OffsetA;             /**< NEW: global line index of Lines1[0] (for chunked processing) */
+		size_t OffsetB;             /**< NEW: global line index of Lines2[0] (for chunked processing) */
 	} FC_USER_CONTEXT;
 
 	/**
@@ -239,6 +241,14 @@ extern "C" {
 
 #ifndef FC_BINARY_STREAM_THRESHOLD_BYTES
 #define FC_BINARY_STREAM_THRESHOLD_BYTES (64ull * 1024ull * 1024ull)
+#endif
+
+#ifndef FC_MIN_CHUNK_LINES
+#define FC_MIN_CHUNK_LINES 1000u
+#endif
+
+#ifndef FC_MAX_CHUNK_LINES
+#define FC_MAX_CHUNK_LINES 50000u
 #endif
 
 	/**
@@ -401,6 +411,65 @@ extern "C" {
 		entry->Next = Map->Buckets[bucketIndex];
 		Map->Buckets[bucketIndex] = entry;
 		return entry;
+	}
+
+	/**
+	 * @brief Computes the optimal chunk size for streaming line processing.
+	 *
+	 * Phase B: Calculates a dynamic chunk size based on the larger file's size and the
+	 * /LBn configuration parameter. The heuristic uses sqrt(FileSizeBytes / 80) to keep
+	 * per-chunk LCS time roughly constant while scaling with file size.
+	 *
+	 * @internal
+	 * @param MaxFileSizeBytes The size in bytes of the larger input file.
+	 * @param BufferLinesConfig The /LBn parameter (100 = neutral, 50 = half, 200 = double).
+	 * @return Optimal number of lines per chunk, clamped to [FC_MIN_CHUNK_LINES, FC_MAX_CHUNK_LINES].
+	 */
+	static inline size_t
+		_FC_ComputeChunkSize(
+			_In_ LONGLONG MaxFileSizeBytes,
+			_In_ UINT BufferLinesConfig)
+	{
+		// Guard against invalid inputs
+		if (MaxFileSizeBytes <= 0)
+			return FC_MIN_CHUNK_LINES;
+
+		UINT Config = BufferLinesConfig;
+		if (Config == 0)
+			Config = 100; // default neutral value
+
+		// Base heuristic: sqrt(file_size / 80) where 80 = est. bytes per line
+		// Using integer square root approximation to avoid floating point
+		size_t BaseChunk = 1000;  // Start with minimum
+		ULONGLONG USize = (ULONGLONG)MaxFileSizeBytes;
+		if (USize > 80000000ull) {
+			// Rough integer square root for large values
+			// sqrt(n) ≈ (n >> 1) for n > 100
+			// Use a simple estimate: for 80MB file (1M lines), target ~3k
+			if (USize > 80000000ull) BaseChunk = 3162;  // sqrt(10M)
+			if (USize > 800000000ull) BaseChunk = 10000;  // sqrt(100M)
+			if (USize > 8000000000ull) BaseChunk = 31622;  // sqrt(1B)
+		}
+
+		// Apply /LBn scaling: BufferLinesConfig of 100 is neutral
+		// 50 = half, 200 = double (linear scaling)
+		size_t Scaled = BaseChunk;
+		if (Config != 100) {
+			// Avoid overflow: scale carefully
+			if (Config > 100) {
+				Scaled = BaseChunk + (BaseChunk * (Config - 100)) / 100;
+			} else if (Config < 100) {
+				Scaled = BaseChunk - (BaseChunk * (100 - Config)) / 100;
+			}
+		}
+
+		// Clamp to valid range
+		if (Scaled < FC_MIN_CHUNK_LINES)
+			return FC_MIN_CHUNK_LINES;
+		if (Scaled > FC_MAX_CHUNK_LINES)
+			return FC_MAX_CHUNK_LINES;
+
+		return Scaled;
 	}
 
 	/**
@@ -1174,10 +1243,11 @@ extern "C" {
 				else if (hasAdds) block.Type = FC_DIFF_TYPE_ADD;
 				else block.Type = FC_DIFF_TYPE_DELETE;
 
-				block.StartA = IndexA;
-				block.EndA = LcsLineA;
-				block.StartB = IndexB;
-				block.EndB = LcsLineB;
+				// Convert chunk-relative indices to absolute indices using Context offsets
+				block.StartA = IndexA + Context->OffsetA;
+				block.EndA = LcsLineA + Context->OffsetA;
+				block.StartB = IndexB + Context->OffsetB;
+				block.EndB = LcsLineB + Context->OffsetB;
 				// CORRECTED: Call the callback from the Config struct, not the Context.
 				Config->DiffCallback(Context, &block);
 			}
@@ -1188,14 +1258,20 @@ extern "C" {
 	}
 
 	/**
-		 * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
-		 * @internal
-		 * @param Context The user context containing file paths, line buffers, and user data.
-		 * @param Config The main comparison	configuration.
-		 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
-		 */
+	 * @brief Implements the Hunt-McIlroy algorithm to find the Longest Common Subsequence.
+	 * @internal
+	 * @param Context The user context containing file paths, line buffers, and user data.
+	 * @param Config The main comparison	configuration.
+	 * @param[out] pLastAnchorA Receives the chunk-relative index of the last confirmed match in buffer A (or 0 if none).
+	 * @param[out] pLastAnchorB Receives the chunk-relative index of the last confirmed match in buffer B (or 0 if none).
+	 * @return FC_OK if files are identical, FC_DIFFERENT if they differ, or an error code.
+	 */
 	static FC_RESULT
-		_FC_FindLcs(_In_ const FC_USER_CONTEXT* Context, _In_ const FC_CONFIG* Config) {
+		_FC_FindLcs(
+			_In_  const FC_USER_CONTEXT* Context,
+			_In_  const FC_CONFIG*       Config,
+			_Out_ size_t*                pLastAnchorA,
+			_Out_ size_t*                pLastAnchorB) {
 		const _FC_BUFFER* pBufferA = Context->Lines1;
 		const _FC_BUFFER* pBufferB = Context->Lines2;
 
@@ -1209,7 +1285,16 @@ extern "C" {
 		size_t* FilteredLcsA = NULL;
 		size_t* FilteredLcsB = NULL;
 
-		if (pBufferA->Count == 0 && pBufferB->Count == 0) return FC_OK;
+		// Initialize anchor outputs: default to no anchor (0)
+		*pLastAnchorA = 0;
+		*pLastAnchorB = 0;
+
+		if (pBufferA->Count == 0 && pBufferB->Count == 0) {
+			// Entire chunk identical
+			*pLastAnchorA = pBufferA->Count;
+			*pLastAnchorB = pBufferB->Count;
+			return FC_OK;
+		}
 		if (pBufferA->Count > 0 && pBufferB->Count == 0) return FC_DIFFERENT;
 		if (pBufferA->Count == 0 && pBufferB->Count > 0) return FC_DIFFERENT;
 
@@ -1307,7 +1392,12 @@ extern "C" {
 			}
 		}
 
-		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) Result = FC_OK;
+		if (LcsLength == pBufferA->Count && LcsLength == pBufferB->Count) {
+			// Entire chunk is identical after LCS
+			Result = FC_OK;
+			*pLastAnchorA = pBufferA->Count;
+			*pLastAnchorB = pBufferB->Count;
+		}
 		else {
 			size_t FilteredLcsLength = _FC_FilterLcsForResync(
 				LcsA, LcsB, LcsLength, Config->ResyncLines, &FilteredLcsA, &FilteredLcsB);
@@ -1317,6 +1407,19 @@ extern "C" {
 				// SIZE_MAX signals a memory allocation failure inside the filter function.
 				Result = FC_ERROR_MEMORY;
 				goto cleanup;
+			}
+
+			// Extract the last anchor from the filtered LCS (chunk-relative indices)
+			if (FilteredLcsLength > 0 && FilteredLcsA != NULL && FilteredLcsB != NULL)
+			{
+				*pLastAnchorA = FilteredLcsA[FilteredLcsLength - 1] + 1;  // +1 for exclusive end
+				*pLastAnchorB = FilteredLcsB[FilteredLcsLength - 1] + 1;
+			}
+			else
+			{
+				// No stable anchor found — entire chunk is unconfirmed diff
+				*pLastAnchorA = 0;
+				*pLastAnchorB = 0;
 			}
 
 			// Process the (potentially filtered) results to show differences.
@@ -1333,6 +1436,82 @@ extern "C" {
 		// The filtered arrays are now owned by these pointers, so we must free them.
 		_FC_HeapFree(FilteredLcsA);
 		_FC_HeapFree(FilteredLcsB);
+		return Result;
+	}
+
+	/**
+	 * @brief Processes a single chunk of lines through the LCS algorithm.
+	 *
+	 * Phase C: Runs LCS over one chunk of file lines and emits diff blocks via callback.
+	 * Returns the anchor pair (last confirmed match) for rollback coordination.
+	 *
+	 * The anchor is critical for boundary handling: if the last anchor is before the
+	 * chunk's final line, a diff block straddles the boundary and the caller should
+	 * rewind to the anchor for re-processing.
+	 *
+	 * @internal
+	 * @param Context User context with chunk's line buffers and offsets (UPDATED: OffsetA, OffsetB set by caller)
+	 * @param Config Comparison configuration
+	 * @param[out] pNextAnchorA Receives the absolute line index of the last anchor in file A (or chunk start if no matches)
+	 * @param[out] pNextAnchorB Receives the absolute line index of the last anchor in file B (or chunk start if no matches)
+	 * @return FC_OK if chunk lines identical, FC_DIFFERENT if diffs found, or error code
+	 */
+	static FC_RESULT
+		_FC_ProcessChunk(
+			_In_ const FC_USER_CONTEXT* Context,
+			_In_ const FC_CONFIG* Config,
+			_Out_ size_t* pNextAnchorA,
+			_Out_ size_t* pNextAnchorB)
+	{
+		if (!Context || !Config || !pNextAnchorA || !pNextAnchorB)
+			return FC_ERROR_INVALID_PARAM;
+
+		const _FC_BUFFER* pBufferA = Context->Lines1;
+		const _FC_BUFFER* pBufferB = Context->Lines2;
+
+		// Initialize anchors to chunk start (offsets)
+		*pNextAnchorA = Context->OffsetA;
+		*pNextAnchorB = Context->OffsetB;
+
+		// Empty chunks are identical
+		if (pBufferA->Count == 0 && pBufferB->Count == 0)
+			return FC_OK;
+
+		// Different sizes → return one as diff
+		if ((pBufferA->Count == 0 && pBufferB->Count > 0) ||
+			(pBufferA->Count > 0 && pBufferB->Count == 0))
+			return FC_DIFFERENT;
+
+		// Check if entire chunk is identical (diagonal check within chunk)
+		BOOL AllMatch = TRUE;
+		if (pBufferA->Count == pBufferB->Count) {
+			for (size_t i = 0; i < pBufferA->Count; i++) {
+				const _FC_LINE* a = (const _FC_LINE*)_FC_BufferGet(pBufferA, i);
+				const _FC_LINE* b = (const _FC_LINE*)_FC_BufferGet(pBufferB, i);
+				if (a->Hash != b->Hash || !_FC_LinesEqual(a, b, Config)) {
+					AllMatch = FALSE;
+					break;
+				}
+			}
+		} else {
+			AllMatch = FALSE;
+		}
+
+		if (AllMatch) {
+			// Entire chunk matches - set anchor to end of chunk
+			*pNextAnchorA = Context->OffsetA + pBufferA->Count;
+			*pNextAnchorB = Context->OffsetB + pBufferB->Count;
+			return FC_OK;
+		}
+
+		// Run LCS on this chunk
+		size_t lastAnchorA = 0, lastAnchorB = 0;
+		FC_RESULT Result = _FC_FindLcs(Context, Config, &lastAnchorA, &lastAnchorB);
+
+		// Convert chunk-relative anchor to absolute line index
+		*pNextAnchorA = Context->OffsetA + lastAnchorA;
+		*pNextAnchorB = Context->OffsetB + lastAnchorB;
+
 		return Result;
 	}
 
@@ -1869,8 +2048,92 @@ extern "C" {
 		Result = _FC_ParseLines(Buffer2, Length2, &BufferB, Config);
 		if (Result != FC_OK) goto cleanup;
 
-		FC_USER_CONTEXT UserCtx = { Path1, Path2, &BufferA, &BufferB, Config->UserData };
-		Result = _FC_FindLcs(&UserCtx, Config);
+		// ========================================================================
+		// Chunked LCS loop - replaces monolithic _FC_FindLcs call.
+		// ========================================================================
+		LONGLONG MaxBytes = (Length1 > Length2) ? (LONGLONG)Length1 : (LONGLONG)Length2;
+		size_t ChunkLines = _FC_ComputeChunkSize(MaxBytes, Config->BufferLines);
+
+		size_t CurA = 0, CurB = 0;
+		BOOL AnyDiff = FALSE;
+
+		while (CurA < BufferA.Count || CurB < BufferB.Count)
+		{
+			// Build non-owning slice views into the full line arrays.
+			size_t SliceCountA = BufferA.Count - CurA;
+			size_t SliceCountB = BufferB.Count - CurB;
+			if (SliceCountA > ChunkLines) SliceCountA = ChunkLines;
+			if (SliceCountB > ChunkLines) SliceCountB = ChunkLines;
+
+			_FC_BUFFER SliceA = {
+				(char*)BufferA.pData + CurA * BufferA.ElementSize,
+				BufferA.ElementSize,
+				SliceCountA,
+				SliceCountA
+			};
+			_FC_BUFFER SliceB = {
+				(char*)BufferB.pData + CurB * BufferB.ElementSize,
+				BufferB.ElementSize,
+				SliceCountB,
+				SliceCountB
+			};
+
+			FC_USER_CONTEXT Ctx = {
+				Path1, Path2,
+				&SliceA, &SliceB,
+				Config->UserData,
+				CurA,    // OffsetA
+				CurB     // OffsetB
+			};
+
+			size_t NextAnchorA = 0, NextAnchorB = 0;
+			FC_RESULT ChunkResult = _FC_ProcessChunk(&Ctx, Config, &NextAnchorA, &NextAnchorB);
+
+			if (ChunkResult == FC_ERROR_MEMORY || ChunkResult == FC_ERROR_IO)
+			{
+				Result = ChunkResult;
+				goto cleanup;
+			}
+			if (ChunkResult == FC_DIFFERENT)
+				AnyDiff = TRUE;
+
+			// Advance cursor based on anchor position.
+			// The anchor represents the line after the last confirmed match (chunk-relative).
+			// Boundary-straddling diffs only occur if the anchor is STRICTLY BEFORE chunk_end
+			// AND there's more content after the chunk (not at EOF).
+			//
+			// If anchor is within chunk but we're at/near EOF, just advance normally.
+
+			BOOL IsAnchorWithinChunk = 
+				(NextAnchorA > CurA && NextAnchorA < CurA + SliceCountA) ||
+				(NextAnchorB > CurB && NextAnchorB < CurB + SliceCountB);
+
+			BOOL HasMoreContent = 
+				(CurA + SliceCountA < BufferA.Count) || 
+				(CurB + SliceCountB < BufferB.Count);
+
+			if (NextAnchorA == CurA && NextAnchorB == CurB)
+			{
+				// No anchor advance — entire chunk is divergent, force advance
+				CurA += SliceCountA;
+				CurB += SliceCountB;
+			}
+			else if (IsAnchorWithinChunk && HasMoreContent)
+			{
+				// Anchor within chunk AND more content exists — boundary-straddling diff
+				// Rewind to anchor for re-processing from the confirmed match point
+				CurA = NextAnchorA;
+				CurB = NextAnchorB;
+			}
+			else
+			{
+				// Normal case: anchor at chunk_end, or at EOF, advance past chunk
+				CurA += SliceCountA;
+				CurB += SliceCountB;
+			}
+		}
+
+		Result = AnyDiff ? FC_DIFFERENT : FC_OK;
 
 	cleanup:
 		if (Buffer1) HeapFree(GetProcessHeap(), 0, Buffer1);
